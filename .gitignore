@@ -1,0 +1,8 @@
+data/*
+!data/mnist-splat
+__pycache__/
+*.csv
+model/wandb/
+logs/
+src/glint/wandb/
+.venv/

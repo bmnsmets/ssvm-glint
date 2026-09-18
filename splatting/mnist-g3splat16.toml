@@ -1,0 +1,21 @@
+# Splatting MNIST configuration
+dataset = "mnist"
+dataroot = "../data" # relative to the folder of this configuration file
+seed = 42
+batch_size = 512
+repeats = 5
+train_dtype = "float16"
+output_dtype = "float16"
+output_train = "../data/mnist-splat/g3splat-16-train.safetensors" # relative to the folder of this configuration file
+output_test = "../data/mnist-splat/g3splat-16-test.safetensors"
+
+[splatter]
+nstacks = 16
+initial_stack_multiplier = 4
+iterations = 100
+learning_rate = 0.05
+learning_rate_gamma = 0.95
+l1_loss_weight = 0.9
+ssim_loss_weight = 0.1
+initialization_inset = 0.05
+coverage = false
