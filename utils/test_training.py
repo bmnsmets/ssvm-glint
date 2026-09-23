@@ -1,9 +1,6 @@
 """
-Tests for utils.training.trainingrun.
+Tests for utils.training.
 
-Run from the repository root:
-
-    pytest utils/tests.py -v
 
 DDP tests use 2 CPU ranks with the gloo backend; CUDA tests are skipped
 when no GPU is available.
@@ -21,7 +18,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Subset, TensorDataset
 
-from utils.training import trainingrun
+from utils.training import infinite_batches, trainingrun
 
 
 def accuracy(yp: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -141,6 +138,60 @@ def test_test_every_without_test_loader_rejected():
             test_loader=None,
             test_every_n_steps=10,
         )
+
+
+# infinite_batches
+
+
+def take(it, n: int) -> list[list[int]]:
+    """First n batches of an index dataset, as lists of indices."""
+    return [batch[0].tolist() for _, batch in zip(range(n), it)]
+
+
+def index_loader(n: int = 10, batch_size: int = 3, **kwargs) -> DataLoader:
+    return DataLoader(TensorDataset(torch.arange(n)), batch_size=batch_size, **kwargs)
+
+
+def test_infinite_batches_cycles():
+    # 10 samples, batch size 3 -> 4 batches per epoch, last one partial
+    epoch = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+    assert take(infinite_batches(index_loader()), 10) == (epoch * 3)[:10]
+
+
+@pytest.mark.parametrize("start_step", [0, 1, 4, 6, 9])
+def test_infinite_batches_start_step(start_step):
+    loader = index_loader()
+    full = take(infinite_batches(loader), start_step + 5)
+    assert take(infinite_batches(loader, start_step), 5) == full[start_step:]
+
+
+def test_infinite_batches_reshuffles_each_epoch():
+    loader = index_loader(n=12, batch_size=4, shuffle=True)
+    batches = take(infinite_batches(loader), 9)
+    epochs = [sum(batches[i : i + 3], []) for i in range(0, 9, 3)]
+    for order in epochs:
+        assert sorted(order) == list(range(12))
+    assert len({tuple(order) for order in epochs}) > 1
+
+
+@pytest.mark.parametrize("start_step", [0, 2, 3, 7])
+def test_infinite_batches_distributed_sampler_resume(start_step):
+    # set_epoch makes DistributedSampler deterministic per epoch, so resuming
+    # mid-epoch reproduces exactly the batches of the uninterrupted run
+    def loader():
+        dataset = TensorDataset(torch.arange(12))
+        sampler = DistributedSampler(dataset, num_replicas=2, rank=0, seed=0)
+        return DataLoader(dataset, batch_size=2, sampler=sampler)
+
+    full = take(infinite_batches(loader()), start_step + 6)
+    assert take(infinite_batches(loader(), start_step), 6) == full[start_step:]
+    # each epoch (3 batches of rank 0's 6 samples) uses a different permutation
+    assert full[:3] != full[3:6]
+
+
+def test_infinite_batches_empty_loader():
+    with pytest.raises(ValueError):
+        next(infinite_batches(index_loader(n=0)))
 
 
 # CUDA
