@@ -11,7 +11,7 @@ from vit import ViT, ViT_SASP
 import sys
 
 sys.path.append("..")
-from helperfunc import load_config_file, print_config_tree, obj_to_dict
+from utils import load_config_file, print_config_tree, obj_to_dict
 from training import run
 
 

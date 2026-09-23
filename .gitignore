@@ -6,3 +6,4 @@ model/wandb/
 logs/
 src/glint/wandb/
 .venv/
+.claude/

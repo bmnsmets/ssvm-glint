@@ -1,3 +1,15 @@
+"""
+Vision Transformer (ViT) classifiers.
+
+Two variants share the same `PatchTokenizer` front end and classification head:
+`ViT` uses standard pre-LN transformer blocks, `ViT_SASP` uses the simplified
+parallel SAS-P blocks of He & Hofmann (2024).
+
+Shape notation in comments: B batch, C image channels, H/W image height/width,
+N number of tokens, D embedding dim, h number of heads, d per-head q/k dim,
+dv per-head value dim.
+"""
+
 import torch.nn as nn
 import torch
 from typing import Literal
@@ -5,7 +17,30 @@ from math import sqrt
 
 
 class PatchTokenizer(nn.Module):
-    """Patch embeddings module in the style of ViT."""
+    """
+    Patch embeddings module in the style of ViT.
+
+    Splits the image into non-overlapping patches with a strided convolution,
+    flattens them to a token sequence, adds position embeddings, then applies
+    LayerNorm and dropout. Optionally prepends a learnable CLS token, which
+    receives no position embedding and bypasses norm and dropout.
+
+    Args:
+        image_size: (H, W) of the input images;
+            preferably divisible by `patch_size` (remainder pixels are cut off).
+        image_channels: Number of input channels C.
+        patch_size: (pH, pW) patch size, also used as the convolution stride.
+        embed_dim: Token embedding dimension D.
+        position_embedding: "learned" for a learnable [N, D] embedding, or None
+            for no position information.
+        norm: Apply LayerNorm to the patch tokens.
+        cls_token: Prepend a learnable CLS token to the sequence.
+        dropout: Drop probability. Uses `Dropout1d` on [B, N, D], so it zeroes
+            entire patch tokens rather than individual features.
+
+    Weights (conv, position embedding, CLS token) are initialized with a
+    truncated normal (std 0.02); the conv bias is initialized to zero.
+    """
 
     def __init__(
         self,
@@ -25,7 +60,7 @@ class PatchTokenizer(nn.Module):
         self.patch_size = patch_size
         self.embed_dim = embed_dim
         self.ntokens = (image_size[0] // patch_size[0]) * (
-            image_size[1] // patch_size[0]
+            image_size[1] // patch_size[1]
         )
 
         self.conv = nn.Conv2d(
@@ -34,6 +69,7 @@ class PatchTokenizer(nn.Module):
             kernel_size=patch_size,
             stride=patch_size,
             padding=0,
+            bias=True,
         )
 
         self.norm = nn.LayerNorm(embed_dim) if norm else nn.Identity()
@@ -49,6 +85,7 @@ class PatchTokenizer(nn.Module):
         self.dropout = nn.Dropout1d(dropout) if dropout > 0 else nn.Identity()
 
         nn.init.trunc_normal_(self.conv.weight, mean=0.0, std=0.02)
+        assert isinstance(self.conv.bias, torch.Tensor)
         nn.init.constant_(self.conv.bias, 0)
         if self.initial_cls_token is not None:
             nn.init.trunc_normal_(self.initial_cls_token, mean=0.0, std=0.02)
@@ -56,6 +93,7 @@ class PatchTokenizer(nn.Module):
             nn.init.trunc_normal_(self.position_embedding, mean=0.0, std=0.02)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Map images [B, C, H, W] to tokens [B, N, D] (or [B, N+1, D] with CLS)."""
         x = self.conv(x)  # [B,C,H,W] -> [B,D,H//pH,W//pW]
         x = x.flatten(-2, -1).permute(0, 2, 1)  # [B,N,D]
         if self.position_embedding is not None:
@@ -70,6 +108,24 @@ class PatchTokenizer(nn.Module):
 
 
 class QKVAttention(nn.Module):
+    """
+    Multi-head self-attention with bias-free query, key and value projections.
+
+    Uses `scaled_dot_product_attention` without masking. The query weights are
+    initialized to zero, so attention is uniform at initialization (each token
+    receives the mean of the values); key and value weights use a truncated
+    normal with std 1/sqrt(D).
+
+    Args:
+        embed_dim: Token embedding dimension D.
+        num_heads: Number of attention heads h.
+        head_dim: Per-head query/key dimension d; defaults to D // h. The value
+            dimension is always dv = D // h, independent of this setting.
+        dropout: Dropout probability on the attention weights (training only).
+
+    The output projection is only present when `num_heads > 1`; with a single
+    head the attended values (width D) are returned directly.
+    """
 
     def __init__(
         self,
@@ -100,6 +156,7 @@ class QKVAttention(nn.Module):
         nn.init.trunc_normal_(self.value.weight, mean=0.0, std=1 / sqrt(self.embed_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Attend over tokens [B, N, D] -> [B, N, D]."""
         B, N, _ = x.shape
         h, d = self.num_heads, self.head_dim
         q, k, v = self.query(x), self.key(x), self.value(x)  # 2x[B,N,h*d],[B,N,h*dv]
@@ -114,6 +171,23 @@ class QKVAttention(nn.Module):
 
 
 class TransformerLayer(nn.Module):
+    """
+    Standard pre-LN transformer block:
+
+        x = x + Attention(LN(x))
+        x = x + FF(LN(x))
+
+    where FF is Linear -> SiLU -> Dropout -> Linear with hidden width
+    `ff_fanout * embed_dim`.
+
+    Args:
+        embed_dim: Token embedding dimension D.
+        head_dim: Per-head query/key dimension; see `QKVAttention`.
+        num_heads: Number of attention heads.
+        ff_fanout: Ratio of the feed-forward hidden width to D.
+        ff_dropout: Dropout probability inside the feed-forward network.
+        attention_dropout: Dropout probability on the attention weights.
+    """
 
     def __init__(
         self,
@@ -153,7 +227,25 @@ class TransformerLayer(nn.Module):
 
 class ViT(nn.Module):
     """
-    The ViT model.
+    Vision Transformer classifier:
+    PatchTokenizer -> `depth` x TransformerLayer -> linear classification head.
+
+    Args:
+        image_size: (H, W) of the input images.
+        image_channels: Number of input channels C.
+        patch_size: (pH, pW) patch size.
+        num_classes: Number of output logits.
+        embed_dim: Token embedding dimension D.
+        depth: Number of transformer layers.
+        head_dim: Per-head query/key dimension; defaults to D // num_heads.
+        num_heads: Number of attention heads.
+        pool: "cls" classifies from a prepended CLS token, "mean" from the
+            average over all tokens.
+        patch_dropout: Probability of dropping whole patch tokens.
+        attention_dropout: Dropout probability on the attention weights.
+        ff_dropout: Dropout probability inside the feed-forward networks.
+        ff_fanout: Ratio of the feed-forward hidden width to D.
+        position_embedding: "learned" or None; see `PatchTokenizer`.
     """
 
     def __init__(
@@ -173,10 +265,6 @@ class ViT(nn.Module):
         ff_fanout: float = 2,
         position_embedding: Literal["learned"] | None = "learned",
     ):
-        """
-        Creates the model:
-        Tokenizer -> ViT layers -> Classification head.
-        """
         super().__init__()
         self.pool = pool
 
@@ -210,6 +298,7 @@ class ViT(nn.Module):
         self.head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, img: torch.Tensor):
+        """Map images [B, C, H, W] to class logits [B, num_classes]."""
         x = self.tokenizer(img)  # [B,N,D]
 
         for layer in self.layers:
@@ -219,20 +308,33 @@ class ViT(nn.Module):
             return self.head(x[:, 0])  # [B,num_classes]
         elif self.pool == "mean":
             return self.head(x.mean(dim=1))  # [B,num_classes]
+        else:
+            raise ValueError(f"Unknown pooling value: {self.pool}")
 
 
 class ShapedAttention(nn.Module):
     """
     Shaped Attention Module
 
+    Computes, per head,
+
+        out = alpha * V + beta * softmax(Q K^T / sqrt(d)) V - gamma * C V
+
+    with V = x, i.e. there are no value or output projections (as in SAS-P [2]).
+    C is the uniform attention matrix, so C V is the token mean of V. Query
+    weights are initialized to zero, so softmax(Q K^T) = C at initialization and
+    the block starts as alpha * x. `alpha`, `beta` and `gamma` are learnable
+    per-head scalars initialized to 1 - 1/sqrt(D), 1 and 1.
+
     References:
         [1] Noci et al. (2023). "The shaped transformer: Attention models in the
             infinite depth-and-width limit." NeurIPS 2023.
         [2] He & Hofmann. (2024). "Simplifying Transformer Blocks." ICLR 2024.
 
-
     Args:
-
+        embed_dim: Token embedding dimension D; must be divisible by `num_heads`.
+        num_heads: Number of attention heads h; each head has dimension D // h.
+        dropout: Dropout probability on the attention weights (training only).
     """
 
     def __init__(
@@ -251,15 +353,15 @@ class ShapedAttention(nn.Module):
         self.query = nn.Linear(embed_dim, num_heads * self.head_dim, bias=False)
         self.key = nn.Linear(embed_dim, num_heads * self.head_dim, bias=False)
 
-        self.alpha = nn.Parameter(
-            torch.full((num_heads, 1, 1), fill_value=(1 - 1 / sqrt(embed_dim)))
-        )
+        self.alpha = nn.Parameter(torch.ones(num_heads, 1, 1))
         self.beta = nn.Parameter(torch.ones(num_heads, 1, 1))
+        self.gamma = nn.Parameter(torch.ones(num_heads, 1, 1))
 
         nn.init.zeros_(self.query.weight)
         nn.init.trunc_normal_(self.key.weight, mean=0.0, std=1 / sqrt(embed_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Attend over tokens [B, N, D] -> [B, N, D]."""
         B, N, _ = x.shape
         h, d = self.num_heads, self.head_dim
 
@@ -270,12 +372,32 @@ class ShapedAttention(nn.Module):
         y = nn.functional.scaled_dot_product_attention(
             q, k, v, dropout_p=(self.dropout if self.training else 0)
         )  # [B,h,N,d]
-        out = self.alpha * v + self.beta * y  # [B,h,N,d]
+        c = v.mean(dim=-2, keepdim=True)  # [B,h,1,d], uniform attention = C V
+        out = self.alpha * v + self.beta * y - self.gamma * c  # [B,h,N,d]
         out = out.permute(0, 2, 1, 3).reshape(B, N, -1)  # [B,N,D]
         return out.contiguous()  # [B,N,D]
 
 
 class SASPLayer(nn.Module):
+    """
+    Parallel SAS-P transformer block of He & Hofmann (2024), without skip
+    connection:
+
+        x = LN(x)
+        x = beta_sa * ShapedAttention(x) + beta_ff * FF(x)
+
+    The identity path is carried by the `alpha * V` term of `ShapedAttention`.
+    FF is Linear -> SiLU -> Dropout -> Linear with hidden width
+    `ff_fanout * embed_dim`. `beta_sa` and `beta_ff` are learnable scalars
+    initialized to 1 and 0.1.
+
+    Args:
+        embed_dim: Token embedding dimension D.
+        num_heads: Number of attention heads.
+        ff_fanout: Ratio of the feed-forward hidden width to D.
+        ff_dropout: Dropout probability inside the feed-forward network.
+        attention_dropout: Dropout probability on the attention weights.
+    """
 
     def __init__(
         self,
@@ -311,8 +433,27 @@ class SASPLayer(nn.Module):
 
 class ViT_SASP(nn.Module):
     """
-    ViT model with simplified SAS-P transformer blocks from:
-    He, B., & Hofmann, T. (2023). Simplifying transformer blocks. arXiv preprint arXiv:2311.01906.
+    Vision Transformer classifier with simplified SAS-P blocks:
+    PatchTokenizer -> `depth` x SASPLayer -> linear classification head.
+
+    References:
+        He & Hofmann. (2024). "Simplifying Transformer Blocks." ICLR 2024.
+
+    Args:
+        image_size: (H, W) of the input images.
+        image_channels: Number of input channels C.
+        patch_size: (pH, pW) patch size.
+        num_classes: Number of output logits.
+        embed_dim: Token embedding dimension D; must be divisible by `num_heads`.
+        depth: Number of SAS-P layers.
+        num_heads: Number of attention heads; head dimension is D // num_heads.
+        pool: "cls" classifies from a prepended CLS token, "mean" from the
+            average over all tokens.
+        patch_dropout: Probability of dropping whole patch tokens.
+        attention_dropout: Dropout probability on the attention weights.
+        ff_dropout: Dropout probability inside the feed-forward networks.
+        ff_fanout: Ratio of the feed-forward hidden width to D.
+        position_embedding: "learned" or None; see `PatchTokenizer`.
     """
 
     def __init__(
@@ -331,10 +472,6 @@ class ViT_SASP(nn.Module):
         ff_fanout: float = 2,
         position_embedding: Literal["learned"] | None = "learned",
     ):
-        """
-        Creates the model:
-        Tokenizer -> ViT layers -> Classification head.
-        """
         super().__init__()
         self.pool = pool
 
@@ -367,6 +504,7 @@ class ViT_SASP(nn.Module):
         self.head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, img: torch.Tensor):
+        """Map images [B, C, H, W] to class logits [B, num_classes]."""
         x = self.tokenizer(img)  # [B,N,D]
 
         for layer in self.layers:
@@ -376,3 +514,5 @@ class ViT_SASP(nn.Module):
             return self.head(x[:, 0])  # [B,num_classes]
         elif self.pool == "mean":
             return self.head(x.mean(dim=1))  # [B,num_classes]
+        else:
+            raise ValueError(f"Unknown pooling value: {self.pool}")

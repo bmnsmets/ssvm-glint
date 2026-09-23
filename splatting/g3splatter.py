@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 from tqdm import tqdm
 from torch import Tensor
-from typing import Literal
+from typing import Literal, overload
 from types import SimpleNamespace
 
 
@@ -90,6 +90,37 @@ def exp_sym2(s: Tensor) -> Tensor:
     return b * (cheye + shc[..., None, None] * m)
 
 
+@overload
+def rasterize(
+    c0: Tensor,
+    c1: Tensor,
+    c2: Tensor,
+    t: Tensor,
+    r: Tensor,
+    s: Tensor,
+    height: int,
+    width: int,
+    resolution: float | None = None,
+    coverage: Literal[False] = False,
+) -> Tensor: ...
+
+
+@overload
+def rasterize(
+    c0: Tensor,
+    c1: Tensor,
+    c2: Tensor,
+    t: Tensor,
+    r: Tensor,
+    s: Tensor,
+    height: int,
+    width: int,
+    resolution: float | None = None,
+    *,
+    coverage: Literal[True],
+) -> tuple[Tensor, Tensor]: ...
+
+
 @torch.compile()
 def rasterize(
     c0: Tensor,  # [B,N,C]
@@ -102,7 +133,7 @@ def rasterize(
     width: int,  # output width in pixels
     resolution: float | None = None,  # pixels / spatial unit
     coverage: bool = False,  # return Gaussian coverage map in addition to the image
-) -> Tensor:
+) -> Tensor | tuple[Tensor, Tensor]:
     """
     rasterize(c0, c1, c2, s, r, t, height, width, resolution) -> Tensor
 
@@ -197,7 +228,7 @@ def rasterize_partition(
     assert height > 0 and width > 0
     assert resolution is None or resolution > 0
 
-    c = colormaps["rainbow"](torch.linspace(0, 1, N))[:, :3]  # [N,3]
+    c = colormaps["rainbow"](torch.linspace(0, 1, N).numpy())[:, :3]  # [N,3]
     c = torch.tensor(list(c))
     c = torch.cat((c.float(), torch.tensor([[1.0, 1.0, 1.0]])), dim=0)
     c = 1 - c.to(t).unsqueeze(0).repeat(B, 1, 1)
@@ -348,6 +379,7 @@ def splat_batch(
     dloss = l1_loss_weight * l1_loss + ssim_loss_weight * ssim_loss
     dloss.backward()
 
+    assert c0.grad is not None
     significance = c0.grad.detach().abs().sum(dim=-1) + s.detach().sum(dim=-1)  # [B,N]
     significance = s[..., 0] + s[..., 1]
     _, indices = torch.sort(significance, dim=-1, descending=True)  # [B,N]
@@ -501,10 +533,12 @@ def test(
         times.append((perf_counter_ns() - t0) / 1e9)
         nans.append(z.isnan().any(dim=(1, 2, 3)).sum().item())
 
-    print(f"\
+    print(
+        f"\
 dloss = {np.mean(dlosses)*1000:.2f}e-3 ± {np.var(dlosses)*1000:.2f}e-3, \
 time = {np.mean(times):.2f}s, \
-nans = {np.sum(nans)}/{batch.shape[0]*repeats}")
+nans = {np.sum(nans)}/{batch.shape[0]*repeats}"
+    )
 
 
 def mnist_test():
@@ -537,7 +571,7 @@ def mnist_example():
     dataroot = Path(__file__).parent.parent / "data"
     ds = torchvision.datasets.MNIST(
         dataroot,
-        transform=Compose([PILToTensor(), ToDtype(torch.float32, scale=True)]),
+        transform=Compose([PILToTensor(), ToDtype(torch.float16, scale=True)]),
         download=True,
     )
     indices = [

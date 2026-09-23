@@ -68,7 +68,7 @@ def flatten_config(config: SimpleNamespace) -> List[Tuple[str, Any]]:
     return lst
 
 
-def obj_to_dict(obj):
+def obj_to_dict(obj: Any) -> Any:
     if type(obj) is dict:
         res = {}
         for k, v in obj.items():

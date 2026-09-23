@@ -1,0 +1,46 @@
+# ViT MNIST experiment configuration
+
+[logging]
+project = "gldg/ssvm-glint"
+path = "../logs"            # relative to the directory of this configuration file
+name = "vit-mnist"
+tags = []
+wandb = true
+
+[data]
+dataset = "mnist"
+root = "../data"  # relative to the directory of this configuration file
+
+[training]
+# seed = 42
+batch_size = 128
+nbatches = 50000
+test_batch_size = 1000
+lr = 2e-3
+dtype = "bfloat16"
+
+[training.scheduler]
+min_lr = 2e-6
+patience = 2000
+factor = 0.2
+threshold = 1e-2
+cooldown = 5000
+
+[model]
+class_name = "ViT"
+
+[model.kwargs]
+image_size = [28, 28]
+image_channels = 1
+patch_size = [7, 7]
+num_classes = 10
+embed_dim = 32
+depth = 3
+num_heads = 4
+head_dim = 8
+attention_dropout = 0.15
+pool = "cls"
+patch_dropout = 0.1
+ff_dropout = 0.1
+ff_fanout = 3
+position_embedding = "learned"

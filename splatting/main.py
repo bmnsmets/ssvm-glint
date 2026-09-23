@@ -11,89 +11,11 @@ sys.path.append("..")
 from utils import (
     load_config_file,
     print_config_tree,
+    get_mnist_dataloaders,
+    get_fashion_dataloaders,
+    get_cifar10_dataloaders,
 )
 from g3splatter import splat_dataloader
-
-
-def get_mnist_dataloaders(
-    root: Path,
-    train_batch_size: int,
-    test_batch_size: int,
-    dtype: torch.dtype = torch.float32,
-):
-    trainset = torchvision.datasets.MNIST(
-        root=root,
-        train=True,
-        download=True,
-        transform=Compose([PILToTensor(), ToDtype(dtype, scale=True)]),
-    )
-    testset = torchvision.datasets.MNIST(
-        root=root,
-        train=False,
-        download=True,
-        transform=Compose([PILToTensor(), ToDtype(dtype, scale=True)]),
-    )
-    train_loader = torch.utils.data.DataLoader(
-        trainset, batch_size=train_batch_size, shuffle=True
-    )
-    test_loader = torch.utils.data.DataLoader(
-        testset, batch_size=test_batch_size, shuffle=False
-    )
-    return train_loader, test_loader
-
-
-def get_fashion_dataloaders(
-    root: Path,
-    train_batch_size: int,
-    test_batch_size: int,
-    dtype: torch.dtype = torch.float32,
-):
-    trainset = torchvision.datasets.FashionMNIST(
-        root=root,
-        train=True,
-        download=True,
-        transform=Compose([PILToTensor(), ToDtype(dtype, scale=True)]),
-    )
-    testset = torchvision.datasets.FashionMNIST(
-        root=root,
-        train=False,
-        download=True,
-        transform=Compose([PILToTensor(), ToDtype(dtype, scale=True)]),
-    )
-    train_loader = torch.utils.data.DataLoader(
-        trainset, batch_size=train_batch_size, shuffle=True
-    )
-    test_loader = torch.utils.data.DataLoader(
-        testset, batch_size=test_batch_size, shuffle=False
-    )
-    return train_loader, test_loader
-
-
-def get_cifar10_dataloaders(
-    root: Path,
-    train_batch_size: int,
-    test_batch_size: int,
-    dtype: torch.dtype = torch.float32,
-):
-    trainset = torchvision.datasets.CIFAR10(
-        root=root,
-        train=True,
-        download=True,
-        transform=Compose([PILToTensor(), ToDtype(dtype, scale=True)]),
-    )
-    testset = torchvision.datasets.CIFAR10(
-        root=root,
-        train=False,
-        download=True,
-        transform=Compose([PILToTensor(), ToDtype(dtype, scale=True)]),
-    )
-    train_loader = torch.utils.data.DataLoader(
-        trainset, batch_size=train_batch_size, shuffle=True
-    )
-    test_loader = torch.utils.data.DataLoader(
-        testset, batch_size=test_batch_size, shuffle=False
-    )
-    return train_loader, test_loader
 
 
 if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
