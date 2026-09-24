@@ -1,8 +1,8 @@
 # ViT MNIST experiment configuration
 
 [logging]
-project = "gldg/ssvm-glint"
-path = "../logs"            # relative to the directory of this configuration file
+project = "ssvm-glint"
+path = "../logs"       # relative to the directory of this configuration file
 name = "vit-mnist"
 tags = []
 wandb = true
@@ -14,17 +14,15 @@ root = "../data"  # relative to the directory of this configuration file
 [training]
 # seed = 42
 batch_size = 128
-nbatches = 50000
+total_steps = 50000
 test_batch_size = 1000
+test_every_n_steps = 5000
 lr = 2e-3
+min_lr = 1e-5
+warmup_steps = 1000
+warmup_factor = 1e-3
+weight_decay = 0.01
 dtype = "bfloat16"
-
-[training.scheduler]
-min_lr = 2e-6
-patience = 2000
-factor = 0.2
-threshold = 1e-2
-cooldown = 5000
 
 [model]
 class_name = "ViT"

@@ -25,6 +25,7 @@ def trainingrun(
     autocast_dtype: torch.dtype | None = None,
     grad_clip_norm: float | None = None,
     checkpoint_path: Path | str | None = None,
+    resume: bool = False,
     wandb_run: wandb.Run | None = None,
 ) -> dict[str, list]:
     """
@@ -48,7 +49,7 @@ def trainingrun(
 
     # Resume
     start_step, history = 0, {}
-    if checkpoint_path and checkpoint_path.exists():
+    if resume and checkpoint_path and checkpoint_path.exists():
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
         getattr(model, "module", model).load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
@@ -92,11 +93,14 @@ def trainingrun(
             train_loss = train_loss.clone()
             dist.all_reduce(train_loss)
             train_loss /= dist.get_world_size()
+        train_loss = train_loss.item()
+
+        pbar.set_postfix(loss=f"{train_loss:.4f}", refresh=False)
 
         if wandb_run is not None:
             wandb_run.log(
                 {
-                    "train_loss": train_loss.item(),
+                    "train_loss": train_loss,
                     "lr": optimizer.param_groups[0]["lr"],
                 },
                 step=step,
@@ -104,7 +108,7 @@ def trainingrun(
 
         if scheduler:
             if isinstance(scheduler, ReduceLROnPlateau):
-                scheduler.step(train_loss.item())
+                scheduler.step(train_loss)
             else:
                 scheduler.step()
 
