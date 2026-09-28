@@ -7,3 +7,5 @@ logs/
 src/glint/wandb/
 .venv/
 .claude/
+.vscode
+.pytest_cache
