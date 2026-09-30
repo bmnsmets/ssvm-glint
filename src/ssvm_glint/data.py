@@ -1,8 +1,11 @@
 from pathlib import Path
 import torch
+from torch import Tensor
+from torch.utils.data import Dataset
 import torchvision
 from torchvision.transforms.v2 import PILToTensor, ToDtype, Compose
 from safetensors import safe_open
+from ssvm_glint.geometry.tokens import AffPlus2Tokens
 
 
 def get_mnist_dataloaders(
@@ -45,6 +48,50 @@ def get_mnist_dataloaders(
     return train_loader, test_loader
 
 
+class AffPlus2TokenDataset(Dataset):
+    """
+    Dataset of (tokens, label) pairs, where sample i is `(tokens[i], labels[i])`.
+
+    Implements `__getitems__` so that a DataLoader fetches a whole batch with a single indexing operation;
+    use it with `collate_fn=_no_collate` since the batch is already assembled.
+    """
+
+    def __init__(self, tokens: AffPlus2Tokens, labels: Tensor):
+        assert tokens.batch_size[0] == labels.shape[0]
+        self.tokens = tokens
+        self.labels = labels
+
+    def __len__(self) -> int:
+        return self.labels.shape[0]
+
+    def __getitem__(self, i: int) -> tuple[AffPlus2Tokens, Tensor]:
+        return self.tokens[i], self.labels[i]
+
+    def __getitems__(self, idx: list[int]) -> tuple[AffPlus2Tokens, Tensor]:
+        idx = torch.as_tensor(idx, device=self.labels.device)
+        return self.tokens[idx], self.labels[idx]
+
+
+def _no_collate(batch):
+    return batch
+
+
+def load_g3splat_dataset(
+    path: str | Path,
+    dtype: torch.dtype = torch.float32,
+    device: torch.device | str | None = None,
+) -> AffPlus2TokenDataset:
+    """
+    Load a g3splat safetensors file as an AffPlus2TokenDataset with tokens of batch size [M,N] and int64 labels [M].
+    The group elements are computed in float32 and then cast to `dtype`.
+    """
+    with safe_open(path, framework="pt", device=str(device or "cpu")) as f:
+        params = {k: f.get_tensor(k).float() for k in ("c0", "c1", "c2", "r", "s", "t")}
+        labels = f.get_tensor("lbl").long()
+    tokens = AffPlus2Tokens.fromg3splatter(**params).to(dtype)
+    return AffPlus2TokenDataset(tokens, labels)
+
+
 def get_g3splat_dataloaders(
     train_path: str | Path,
     test_path: str | Path,
@@ -53,37 +100,25 @@ def get_g3splat_dataloaders(
     dtype: torch.dtype = torch.float32,
     device: torch.device | str | None = None,
 ):
-    with safe_open(train_path, framework="pt", device=device) as f:
-        c0 = f.get_tensor("c0").to(dtype)
-        c1 = f.get_tensor("c1").to(dtype)
-        c2 = f.get_tensor("c2").to(dtype)
-        r = f.get_tensor("r").to(dtype)
-        s = f.get_tensor("s").to(dtype)
-        t = f.get_tensor("t").to(dtype)
-        lbl = f.get_tensor("lbl").to(dtype)
-        trainset = torch.utils.data.TensorDataset(c0, c1, c2, r, s, t, lbl)
-
-    with safe_open(test_path, framework="pt", device=device) as f:
-        c0 = f.get_tensor("c0").to(dtype)
-        c1 = f.get_tensor("c1").to(dtype)
-        c2 = f.get_tensor("c2").to(dtype)
-        r = f.get_tensor("r").to(dtype)
-        s = f.get_tensor("s").to(dtype)
-        t = f.get_tensor("t").to(dtype)
-        lbl = f.get_tensor("lbl").to(dtype)
-        testset = torch.utils.data.TensorDataset(c0, c1, c2, r, s, t, lbl)
+    """
+    DataLoaders yielding (AffPlus2Tokens [B,N], labels [B]) batches.
+    """
+    trainset = load_g3splat_dataset(train_path, dtype=dtype, device=device)
+    testset = load_g3splat_dataset(test_path, dtype=dtype, device=device)
 
     train_loader = torch.utils.data.DataLoader(
         trainset,
         batch_size=train_batch_size,
         shuffle=True,
         drop_last=True,
+        collate_fn=_no_collate,
     )
     test_loader = torch.utils.data.DataLoader(
         testset,
         batch_size=test_batch_size,
         shuffle=False,
         drop_last=True,
+        collate_fn=_no_collate,
     )
     return train_loader, test_loader
 

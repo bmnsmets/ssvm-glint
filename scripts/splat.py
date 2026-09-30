@@ -1,22 +1,16 @@
-import sys
 import argparse
 from pathlib import Path
 import torch
-import torchvision
-from torchvision.transforms.v2 import PILToTensor, ToDtype, Compose
 import warnings
 from safetensors.torch import save_file
 
-sys.path.append("..")
-from utils import (
-    load_config_file,
-    print_config_tree,
+from ssvm_glint.config import load_config_file, print_config_tree
+from ssvm_glint.data import (
     get_mnist_dataloaders,
     get_fashion_dataloaders,
     get_cifar10_dataloaders,
 )
-from g3splatter import splat_dataloader
-
+from ssvm_glint.splatting import splat_dataloader
 
 if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     parser = argparse.ArgumentParser(description="Splatting")

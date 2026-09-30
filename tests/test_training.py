@@ -1,5 +1,5 @@
 """
-Tests for utils.training.
+Tests for ssvm_glint.training.
 
 
 DDP tests use 2 CPU ranks with the gloo backend; CUDA tests are skipped
@@ -18,7 +18,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Subset, TensorDataset
 
-from utils.training import infinite_batches, trainingrun
+from ssvm_glint.training import infinite_batches, trainingrun
 
 
 def accuracy(yp: torch.Tensor, y: torch.Tensor) -> torch.Tensor:

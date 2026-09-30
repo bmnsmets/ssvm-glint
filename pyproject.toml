@@ -21,6 +21,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "opt-einsum>=3.4.0",
     "safetensors>=0.8.0",
+    "tensordict>=0.14.2",
 ]
 
 [project.optional-dependencies]
@@ -29,9 +30,9 @@ cu12 = ["torch>=2.14.0", "torchvision>=0.29.0"]
 cu13 = ["torch>=2.14.0", "torchvision>=0.29.0"]
 cpu = ["torch>=2.14.0", "torchvision>=0.29.0"]
 
-# [build-system]
-# requires = ["uv_build>=0.9.16,<0.10.0"]
-# build-backend = "uv_build"
+[build-system]
+requires = ["uv_build>=0.11.2,<0.12.0"]
+build-backend = "uv_build"
 
 [tool.uv.sources]
 torch = [
@@ -69,9 +70,10 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [dependency-groups]
-dev = [
-    "pytest>=9.1.1",
-]
+dev = ["pytest>=9.1.1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.uv]
 conflicts = [

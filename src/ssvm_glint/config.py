@@ -8,19 +8,16 @@ def git_root() -> Path:
     Returns the root directory of the git repo this file is in.
     """
     import subprocess
-    from pathlib import Path
 
-    path = Path(
-        subprocess.Popen(
-            ["git", "rev-parse", "--show-toplevel"], stdout=subprocess.PIPE
-        )
-        .communicate()[0]
-        .rstrip()
-        .decode("utf-8")
-    )
+    out = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=Path(__file__).resolve().parent,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
-    if path.exists:
-        return path
+    if out and Path(out).exists():
+        return Path(out)
 
     for p in Path(__file__).parents:
         if (p / ".git").exists():

@@ -1,93 +1,13 @@
 import torch
 import math
-from ssim import SSIM
+from ssvm_glint.splatting.ssim import SSIM
 from torch.utils.data import DataLoader
-from pathlib import Path
 from tqdm import tqdm
 from torch import Tensor
 from typing import Literal, overload
 from types import SimpleNamespace
-
-
-@torch.compile()
-def sinhc(x: torch.Tensor) -> torch.Tensor:
-    """
-    sinhc(Tensor) -> Tensor
-
-    Computes the hyperbolic sinc function: sinh(x) / x.
-    Numerically stable across float16, bfloat16, float32, and float64.
-
-    Args:
-        x (Tensor)
-    Returns:
-        Tensor: same shape as the input tensor.
-    """
-    small = x.abs() < 0.2  # safety zone sufficient for float16
-
-    # direct computation
-    x_safe = torch.where(small, 1, x)
-    exact = torch.sinh(x_safe) / x_safe
-    # Taylor series approximation for small x
-    # sinh(x)/x = 1 + x^2 / 6 + x^4 / 120 + O(x^6)
-    x2 = x**2
-    taylor = 1.0 + x2 / 6.0 + (x2**2) / 120.0
-
-    return taylor.where(small, exact)
-
-
-@torch.compile()
-def exp_so2(r: Tensor) -> Tensor:
-    """
-    exp_so2(Tensor) -> Tensor
-
-    Compute so(2) -> SO(2) matrix exponential
-    exp(
-        [[0, -r],
-         [r, 0]]
-    ) =
-    [[cos(r), -sin(r)],
-     [sin(r), cos(r)]]
-    """
-    c, s = r.cos(), r.sin()  # [...], [...]
-    R = torch.stack([torch.stack([c, -s]), torch.stack([s, c])])  # [2,2,...]
-    return R.permute(*range(2, R.ndim), 0, 1).contiguous()  # [...,2,2]
-
-
-@torch.compile()
-def exp_sym2(s: Tensor) -> Tensor:
-    """
-    exp_sym2(Tensor) -> Tensor
-
-    Compute sym(2) -> SPD(2) matrix exponential:
-    exp(
-        [[s1, s3],
-         [s3, s2]]
-    )
-    =
-    exp((s1+s2)/2) * (
-        cosh(a) * [[1,0],[0,1]] + sinh(a)/a * [[(s1-s2)/2, s3],[s2,(s2-s1)/2]]
-    )
-    where a = 1/2 * sqrt((s1-s2)**2 + 4*s3**2 + eps).
-
-    Args:
-        s (Tensor): with shape [...,3]
-    Returns:
-        Tensor: with shape [...,2,2]
-    """
-    assert s.shape[-1] == 3
-    s1, s2, s3 = s[..., 0], s[..., 1], s[..., 2]
-
-    a = (
-        1 / 2 * torch.sqrt((s1 - s2).pow(2) + 4 * s3.pow(2) + torch.finfo(s.dtype).eps)
-    )  # [...]
-    ch, shc = torch.cosh(a), sinhc(a)  # [...,1,1], [...,1,1]
-    cheye = ch[..., None, None] * torch.eye(2).to(ch)  # [...,2,2]
-    m = torch.stack(
-        [torch.stack([(s1 - s2) / 2, s3]), torch.stack([s3, (s2 - s1) / 2])]
-    )  # [2,2,...]
-    m = m.permute(*range(2, m.ndim), 0, 1)  # [...,2,2]
-    b = torch.exp((s1 + s2) / 2)[..., None, None]  # [...,1,1]
-    return b * (cheye + shc[..., None, None] * m)
+from ssvm_glint.geometry.exp import exp_so2, exp_sym2
+from ssvm_glint.config import git_root
 
 
 @overload
@@ -533,12 +453,10 @@ def test(
         times.append((perf_counter_ns() - t0) / 1e9)
         nans.append(z.isnan().any(dim=(1, 2, 3)).sum().item())
 
-    print(
-        f"\
+    print(f"\
 dloss = {np.mean(dlosses)*1000:.2f}e-3 ± {np.var(dlosses)*1000:.2f}e-3, \
 time = {np.mean(times):.2f}s, \
-nans = {np.sum(nans)}/{batch.shape[0]*repeats}"
-    )
+nans = {np.sum(nans)}/{batch.shape[0]*repeats}")
 
 
 def mnist_test():
@@ -548,7 +466,7 @@ def mnist_test():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
 
-    dataroot = Path(__file__).parent.parent / "data"
+    dataroot = git_root() / "data"
     ds = torchvision.datasets.MNIST(
         dataroot,
         transform=Compose([PILToTensor(), ToDtype(torch.float32, scale=True)]),
@@ -568,7 +486,7 @@ def mnist_example():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
 
-    dataroot = Path(__file__).parent.parent / "data"
+    dataroot = git_root() / "data"
     ds = torchvision.datasets.MNIST(
         dataroot,
         transform=Compose([PILToTensor(), ToDtype(torch.float16, scale=True)]),
@@ -610,7 +528,7 @@ def fashion_test():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
 
-    dataroot = Path(__file__).parent.parent / "data"
+    dataroot = git_root() / "data"
     ds = torchvision.datasets.FashionMNIST(
         dataroot,
         transform=Compose([PILToTensor(), ToDtype(torch.float32, scale=True)]),
@@ -631,7 +549,7 @@ def fashion_example():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
 
-    dataroot = Path(__file__).parent.parent / "data"
+    dataroot = git_root() / "data"
     ds = torchvision.datasets.FashionMNIST(
         dataroot,
         transform=Compose([PILToTensor(), ToDtype(torch.float32, scale=True)]),
@@ -660,7 +578,7 @@ def cifar_test():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
 
-    dataroot = Path(__file__).parent.parent / "data"
+    dataroot = git_root() / "data"
     ds = torchvision.datasets.CIFAR10(
         dataroot,
         transform=Compose([PILToTensor(), ToDtype(torch.float32, scale=True)]),
@@ -681,7 +599,7 @@ def cifar_example():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
 
-    dataroot = Path(__file__).parent.parent / "data"
+    dataroot = git_root() / "data"
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore")
         ds = torchvision.datasets.CIFAR10(
@@ -713,7 +631,7 @@ def imagenette_example():
     torch.set_float32_matmul_precision("high")
     torch._dynamo.config.cache_size_limit = 64
 
-    dataroot = Path(__file__).parent.parent / "data"
+    dataroot = git_root() / "data"
     ds = torchvision.datasets.Imagenette(
         dataroot,
         transform=Compose([PILToTensor(), ToDtype(torch.float16, scale=True)]),

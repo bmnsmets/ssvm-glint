@@ -6,23 +6,15 @@ from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 import wandb
 from safetensors.torch import save_model
 
-
-import sys
-
-sys.path.append("..")
-from vit import ViT
-from glint import GLInT
-
-from utils import (
-    load_config_file,
-    print_config_tree,
-    obj_to_dict,
+from ssvm_glint.models import ViT, GLInTClassifier
+from ssvm_glint.config import load_config_file, print_config_tree, obj_to_dict
+from ssvm_glint.data import (
     get_mnist_dataloaders,
     get_g3splat_dataloaders,
     get_fashion_dataloaders,
     get_cifar10_dataloaders,
-    trainingrun,
 )
+from ssvm_glint.training import trainingrun
 
 if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     parser = argparse.ArgumentParser(description="Image Classifier Training")
@@ -52,7 +44,7 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     config.training.dtype = dtypes[config.training.dtype]
 
     # Resolve model class
-    model_classes = {"ViT": ViT, "GLInT": GLInT}
+    model_classes = {"ViT": ViT, "GLInT": GLInTClassifier}
     model_class_name = config.model.class_name
     model_class = model_classes[model_class_name]
 
@@ -159,7 +151,7 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
         scheduler=sched,
         metric_fns=metric_fns,
         autocast_dtype=config.training.dtype,
-        checkpoint_path=f"../logs/last.pt",
+        checkpoint_path=config.logging.path / "last.pt",
         resume=args.resume,
         wandb_run=wandb_run,
     )
