@@ -16,7 +16,7 @@ from ssvm_glint.data import (
     get_g3splat_dataloaders,
     load_g3splat_dataset,
 )
-from ssvm_glint.geometry.tokens import AffPlus2Tokens
+from ssvm_glint.tokens import AffPlus2Tokens
 
 M, N, C = 20, 4, 1
 

@@ -1,5 +1,5 @@
 """
-Tests for ssvm_glint.geometry.tokens.
+Tests for ssvm_glint.tokens.
 """
 
 import dataclasses
@@ -7,8 +7,8 @@ import dataclasses
 import pytest
 import torch
 
-from ssvm_glint.geometry.exp import exp_so2, exp_sym2
-from ssvm_glint.geometry.tokens import AffPlus2Tokens
+from ssvm_glint.exp import exp_so2, exp_sym2
+from ssvm_glint.tokens import AffPlus2Tokens
 
 B, N, C = 2, 5, 3
 

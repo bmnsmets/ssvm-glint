@@ -29,9 +29,10 @@ export UV_NO_SYNC=1
 
 ```
 src/ssvm_glint/        installable package (`uv sync` installs it in editable mode)
-    geometry/          Lie group maths and geometric tokens
+    exp.py, polar.py   Lie group maths (exponentials, polar decomposition)
+    tokens.py          geometric tokens (AffPlus2Tokens)
+    glint.py, vit.py   GLInT and the ViT baseline
     splatting/         higher order Gaussian splatter
-    models/            GLInT and the ViT baseline
     config.py          experiment configuration loading and printing
     data.py            datasets and dataloaders
     training.py        generic training loop

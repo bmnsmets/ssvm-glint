@@ -1,8 +1,8 @@
 import torch
 from torch import Tensor
 from tensordict import TensorClass
-from ssvm_glint.geometry.exp import exp_sym2, exp_so2
-from ssvm_glint.geometry.polar import polar2x2, polar2x2_a, polar2x2_R, polar2x2_S
+from ssvm_glint.exp import exp_sym2, exp_so2
+from ssvm_glint.polar import polar2x2, polar2x2_a, polar2x2_R, polar2x2_S
 
 
 @torch.compile()

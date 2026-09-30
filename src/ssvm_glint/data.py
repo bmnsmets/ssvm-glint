@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 import torchvision
 from torchvision.transforms.v2 import PILToTensor, ToDtype, Compose
 from safetensors import safe_open
-from ssvm_glint.geometry.tokens import AffPlus2Tokens
+from ssvm_glint.tokens import AffPlus2Tokens
 
 
 def get_mnist_dataloaders(

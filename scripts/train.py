@@ -6,7 +6,8 @@ from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 import wandb
 from safetensors.torch import save_model
 
-from ssvm_glint.models import ViT, GLInTClassifier
+from ssvm_glint.vit import ViT
+from ssvm_glint.glint import GLInTClassifier
 from ssvm_glint.config import load_config_file, print_config_tree, obj_to_dict
 from ssvm_glint.data import (
     get_mnist_dataloaders,

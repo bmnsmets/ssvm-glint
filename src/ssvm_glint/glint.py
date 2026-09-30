@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
+from torch import Tensor
 from typing import Literal
+from ssvm_glint.tokens import AffPlus2Tokens
 
 
 class GLInTClassifier(nn.Module):
@@ -18,4 +20,7 @@ class GLInTClassifier(nn.Module):
         ff_dropout: float = 0,
         ff_fanout: float = 2,
     ):
+        pass
+
+    def forward(self, tokens: AffPlus2Tokens) -> Tensor:
         pass
