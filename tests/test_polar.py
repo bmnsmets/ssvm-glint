@@ -1,5 +1,5 @@
 """
-Tests for ssvm_glint.polar.
+Tests for the polar decompositions in ssvm_glint.math.
 
 CUDA tests are skipped when no GPU is available.
 """
@@ -9,7 +9,7 @@ import math
 import pytest
 import torch
 
-from ssvm_glint.polar import (
+from ssvm_glint.math import (
     _polar2x2,
     polar2x2,
     polar2x2_a,

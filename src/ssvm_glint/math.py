@@ -1,0 +1,171 @@
+"""
+Low-level tensor math: matrix exponentials, polar decompositions and inverses for 2x2 matrices.
+"""
+
+from torch import Tensor
+import torch
+
+
+@torch.compile()
+def sinhc(x: torch.Tensor) -> torch.Tensor:
+    """
+    sinhc(Tensor) -> Tensor
+
+    Computes the hyperbolic sinc function: sinh(x) / x.
+    Numerically stable across float16, bfloat16, float32, and float64.
+
+    Args:
+        x (Tensor)
+    Returns:
+        Tensor: same shape as the input tensor.
+    """
+    small = x.abs() < 0.2  # safety zone sufficient for float16
+
+    # direct computation
+    x_safe = torch.where(small, 1, x)
+    exact = torch.sinh(x_safe) / x_safe
+    # Taylor series approximation for small x
+    # sinh(x)/x = 1 + x^2 / 6 + x^4 / 120 + O(x^6)
+    x2 = x**2
+    taylor = 1.0 + x2 / 6.0 + (x2**2) / 120.0
+
+    return taylor.where(small, exact)
+
+
+@torch.compile()
+def exp_so2(r: Tensor) -> Tensor:
+    """
+    exp_so2(Tensor) -> Tensor
+
+    Compute so(2) -> SO(2) matrix exponential
+    exp(
+        [[0, -r],
+         [r, 0]]
+    ) =
+    [[cos(r), -sin(r)],
+     [sin(r), cos(r)]]
+    """
+    c, s = r.cos(), r.sin()  # [...], [...]
+    R = torch.stack([torch.stack([c, -s]), torch.stack([s, c])])  # [2,2,...]
+    return R.permute(*range(2, R.ndim), 0, 1).contiguous()  # [...,2,2]
+
+
+@torch.compile()
+def exp_sym2(s: Tensor) -> Tensor:
+    """
+    exp_sym2(Tensor) -> Tensor
+
+    Compute sym(2) -> SPD(2) matrix exponential:
+    exp(
+        [[s1, s3],
+         [s3, s2]]
+    )
+    =
+    exp((s1+s2)/2) * (
+        cosh(a) * [[1,0],[0,1]] + sinh(a)/a * [[(s1-s2)/2, s3],[s2,(s2-s1)/2]]
+    )
+    where a = 1/2 * sqrt((s1-s2)**2 + 4*s3**2 + eps).
+
+    Args:
+        s (Tensor): with shape [...,3]
+    Returns:
+        Tensor: with shape [...,2,2]
+    """
+    assert s.shape[-1] == 3
+    s1, s2, s3 = s[..., 0], s[..., 1], s[..., 2]
+
+    a = (
+        1 / 2 * torch.sqrt((s1 - s2).pow(2) + 4 * s3.pow(2) + torch.finfo(s.dtype).eps)
+    )  # [...]
+    ch, shc = torch.cosh(a), sinhc(a)  # [...,1,1], [...,1,1]
+    cheye = ch[..., None, None] * torch.eye(2).to(ch)  # [...,2,2]
+    m = torch.stack(
+        [torch.stack([(s1 - s2) / 2, s3]), torch.stack([s3, (s2 - s1) / 2])]
+    )  # [2,2,...]
+    m = m.permute(*range(2, m.ndim), 0, 1)  # [...,2,2]
+    b = torch.exp((s1 + s2) / 2)[..., None, None]  # [...,1,1]
+    return b * (cheye + shc[..., None, None] * m)
+
+
+def _polar2x2(A: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    """
+    Polar decomposition A = a * R @ S of A in GL^+(2), in closed form.
+    For A = R @ P with P symmetric: A00 + A11 = cos(r) tr(P) and A10 - A01 = sin(r) tr(P), with tr(P) > 0.
+    S = R^T A / a is computed elementwise, using that it is symmetric.
+
+    Args:
+        A (Tensor): with shape [...,2,2] and det(A) > 0
+    Returns:
+        a (Tensor) [...]: isotropic scale factor sqrt(det(A))
+        R (Tensor) [...,2,2]: rotation in SO(2)
+        S (Tensor) [...,2,2]: symmetric positive definite with det(S) = 1
+    """
+    A00, A01, A10, A11 = A[..., 0, 0], A[..., 0, 1], A[..., 1, 0], A[..., 1, 1]
+    c = A00 + A11  # [...]
+    s = A10 - A01  # [...]
+    n = torch.hypot(c, s)  # [...]
+    a = (A00 * A11 - A01 * A10).sqrt()  # [...]
+    R = torch.stack([torch.stack([c, -s], -1), torch.stack([s, c], -1)], -2)
+    R = R / n[..., None, None]  # [...,2,2]
+    w = 1 / (n * a)  # [...]
+    S00 = (c * A00 + s * A10) * w
+    S01 = (c * A01 + s * A11) * w
+    S11 = (c * A11 - s * A01) * w
+    S = torch.stack([torch.stack([S00, S01], -1), torch.stack([S01, S11], -1)], -2)
+    return a, R, S
+
+
+# Separate compiled entry points so that the unused factors are eliminated from each graph.
+@torch.compile()
+def polar2x2(A: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    """
+    Polar decomposition A = a * R @ S of A in GL^+(2), see `_polar2x2`.
+    """
+    return _polar2x2(A)
+
+
+@torch.compile()
+def polar2x2_a(A: Tensor) -> Tensor:
+    """
+    Isotropic scale factor a = sqrt(det(A)) of the polar decomposition A = a * R @ S.
+    """
+    return _polar2x2(A)[0]
+
+
+@torch.compile()
+def polar2x2_R(A: Tensor) -> Tensor:
+    """
+    Rotation factor R of the polar decomposition A = a * R @ S.
+    """
+    return _polar2x2(A)[1]
+
+
+@torch.compile()
+def polar2x2_S(A: Tensor) -> Tensor:
+    """
+    SL(2) factor S of the polar decomposition A = a * R @ S.
+    """
+    return _polar2x2(A)[2]
+
+
+@torch.compile()
+def inv2x2(A: Tensor) -> Tensor:
+    """
+    Compute A^-1 for A with shape [...,2,2], using A^-1 = adj(A) / det(A).
+    """
+    A00, A01, A10, A11 = A[..., 0, 0], A[..., 0, 1], A[..., 1, 0], A[..., 1, 1]
+    det = A00 * A11 - A01 * A10  # [...]
+    adj = torch.stack([A11, -A01, -A10, A00], -1).unflatten(-1, (2, 2))
+    return adj / det[..., None, None]
+
+
+@torch.compile()
+def inv_apply2x2(A: Tensor, x: Tensor) -> Tensor:
+    """
+    Compute A^-1 x for A with shape [...,2,2] and x with shape [...,2], using A^-1 = adj(A) / det(A).
+    """
+    A00, A01, A10, A11 = A[..., 0, 0], A[..., 0, 1], A[..., 1, 0], A[..., 1, 1]
+    det = A00 * A11 - A01 * A10  # [...]
+    y0 = A11 * x[..., 0] - A01 * x[..., 1]
+    y1 = A00 * x[..., 1] - A10 * x[..., 0]
+    return torch.stack([y0, y1], -1) / det[..., None]

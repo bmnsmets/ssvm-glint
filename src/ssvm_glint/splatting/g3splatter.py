@@ -6,7 +6,7 @@ from tqdm import tqdm
 from torch import Tensor
 from typing import Literal, overload
 from types import SimpleNamespace
-from ssvm_glint.exp import exp_so2, exp_sym2
+from ssvm_glint.math import exp_so2, exp_sym2
 from ssvm_glint.config import git_root
 
 

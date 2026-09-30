@@ -95,6 +95,10 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     else:
         raise ValueError(f"Unknown dataset: {config.data.dataset}")
 
+    # Infer the dimension of the semantic part of the tokens from the data
+    if model_class is GLInTClassifier:
+        config.model.kwargs.in_dim = train_loader.dataset.tokens.u.shape[-1]
+
     # Instantiate model
     model = model_class(**obj_to_dict(config.model.kwargs))
     model.to(config.training.device)

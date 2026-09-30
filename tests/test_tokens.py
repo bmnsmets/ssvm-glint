@@ -7,7 +7,7 @@ import dataclasses
 import pytest
 import torch
 
-from ssvm_glint.exp import exp_so2, exp_sym2
+from ssvm_glint.math import exp_so2, exp_sym2
 from ssvm_glint.tokens import AffPlus2Tokens
 
 B, N, C = 2, 5, 3

@@ -1,20 +1,16 @@
 import torch
 from torch import Tensor
 from tensordict import TensorClass
-from ssvm_glint.exp import exp_sym2, exp_so2
-from ssvm_glint.polar import polar2x2, polar2x2_a, polar2x2_R, polar2x2_S
-
-
-@torch.compile()
-def _inv_apply2x2(A: Tensor, x: Tensor) -> Tensor:
-    """
-    Compute A^-1 x for A with shape [...,2,2] and x with shape [...,2], using A^-1 = adj(A) / det(A).
-    """
-    A00, A01, A10, A11 = A[..., 0, 0], A[..., 0, 1], A[..., 1, 0], A[..., 1, 1]
-    det = A00 * A11 - A01 * A10  # [...]
-    y0 = A11 * x[..., 0] - A01 * x[..., 1]
-    y1 = A00 * x[..., 1] - A10 * x[..., 0]
-    return torch.stack([y0, y1], -1) / det[..., None]
+from ssvm_glint.math import (
+    exp_sym2,
+    exp_so2,
+    polar2x2,
+    polar2x2_a,
+    polar2x2_R,
+    polar2x2_S,
+    inv2x2,
+    inv_apply2x2,
+)
 
 
 class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):
@@ -114,7 +110,7 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):
 
         Note: intentionally without a minus sign, so this is *not* the translation part -A^-1 x of the inverse group element.
         """
-        return _inv_apply2x2(self.A, self.x)
+        return inv_apply2x2(self.A, self.x)
 
     @property
     def R(self) -> Tensor:
@@ -140,3 +136,23 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):
             S (Tensor) [...,2,2]: symmetric positive definite with det(S) = 1
         """
         return polar2x2(self.A)
+
+    def affine_invariant(self) -> Tensor:
+        """
+        Position of the token mean relative to each token, i.e. the group product g^-1 gmean,
+        where gmean is the elementwise mean of `g` over the token dimension.
+
+        Writing gmean = (Am, xm), the result is (A^-1 Am, A^-1 (xm - x)). Note that gmean need not
+        itself lie in Aff^+(2); the formula is applied regardless, and is exact whenever det(Am) > 0.
+
+        Equivariance: replacing every token by h g for a fixed h in Aff^+(2) leaves the result unchanged,
+        since gmean is linear in g.
+
+        Returns:
+            Tensor [...,2,3]: same shape as `g`.
+        """
+        gmean = self.g.mean(dim=-3, keepdim=True)  # [...,1,2,3]
+        Ainv = inv2x2(self.A)  # [...,2,2]
+        A = torch.matmul(Ainv, gmean[..., :, :2])  # [...,2,2]
+        x = torch.matmul(Ainv, (gmean[..., :, 2] - self.x)[..., None])  # [...,2,1]
+        return torch.cat((A, x), dim=-1)
