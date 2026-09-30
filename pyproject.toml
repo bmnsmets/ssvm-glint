@@ -24,11 +24,6 @@ dependencies = [
     "tensordict>=0.14.2",
 ]
 
-[project.optional-dependencies]
-cu11 = ["torch==2.7.1", "torchvision==0.22.1"]
-cu12 = ["torch>=2.14.0", "torchvision>=0.29.0"]
-cu13 = ["torch>=2.14.0", "torchvision>=0.29.0"]
-cpu = ["torch>=2.14.0", "torchvision>=0.29.0"]
 
 [build-system]
 requires = ["uv_build>=0.11.2,<0.12.0"]
@@ -36,16 +31,16 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu118", extra = "cu11" },
-    { index = "pytorch-cu126", extra = "cu12" },
-    { index = "pytorch-cu132", extra = "cu13" },
-    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu118", group = "cu11" },
+    { index = "pytorch-cu126", group = "cu12" },
+    { index = "pytorch-cu132", group = "cu13" },
+    { index = "pytorch-cpu", group = "cpu" },
 ]
 torchvision = [
-    { index = "pytorch-cu118", extra = "cu11" },
-    { index = "pytorch-cu126", extra = "cu12" },
-    { index = "pytorch-cu132", extra = "cu13" },
-    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu118", group = "cu11" },
+    { index = "pytorch-cu126", group = "cu12" },
+    { index = "pytorch-cu132", group = "cu13" },
+    { index = "pytorch-cpu", group = "cpu" },
 ]
 
 
@@ -71,16 +66,21 @@ explicit = true
 
 [dependency-groups]
 dev = ["pytest>=9.1.1"]
+cu11 = ["torch==2.7.1", "torchvision==0.22.1"]
+cu12 = ["torch>=2.14.0", "torchvision>=0.29.0"]
+cu13 = ["torch>=2.14.0", "torchvision>=0.29.0"]
+cpu = ["torch>=2.14.0", "torchvision>=0.29.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.uv]
+default-groups = ["dev", "cu13"]
 conflicts = [
     [
-        { extra = "cu11" },
-        { extra = "cu12" },
-        { extra = "cu13" },
-        { extra = "cpu" },
+        { group = "cu11" },
+        { group = "cu12" },
+        { group = "cu13" },
+        { group = "cpu" },
     ],
 ]

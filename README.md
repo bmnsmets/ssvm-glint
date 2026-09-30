@@ -11,15 +11,25 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 Then go to the repository's root and do
 ```console
-uv sync --extra {cpu|cu11|cu12|cu13}
+uv sync
 ```
-to setup the `ssvm-glint` project environment with CPU, CUDA 11, CUDA 12 or CUDA 13 support.
+to setup the `ssvm-glint` project environment with CUDA 13 support (the default).
+
+For CPU only, CUDA 11 or CUDA 12 support replace the default `cu13` dependency group:
+```console
+uv sync --no-group cu13 --group {cpu|cu11|cu12}
+```
+Note that a later plain `uv sync` or `uv run` switches the environment back to CUDA 13.
+Either pass the same `--no-group cu13 --group ...` flags to every `uv run`, or skip the automatic sync after the initial `uv sync`:
+```console
+export UV_NO_SYNC=1
+```
 
 ## Project layout
 
 ```
 src/ssvm_glint/        installable package (`uv sync` installs it in editable mode)
-    geometry/          Lie group maths and geometric tokens, shared by everything else
+    geometry/          Lie group maths and geometric tokens
     splatting/         higher order Gaussian splatter
     models/            GLInT and the ViT baseline
     config.py          experiment configuration loading and printing
@@ -28,7 +38,6 @@ src/ssvm_glint/        installable package (`uv sync` installs it in editable mo
 scripts/               command line entry points and their configuration files
 tests/                 pytest suite, run with `uv run pytest`
 ```
-Since the package is installed, `from ssvm_glint.geometry import AffPlus2Tokens` etc. works from any directory, notebook or interactive session.
 
 ## Splatting
 
