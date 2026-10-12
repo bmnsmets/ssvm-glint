@@ -1,8 +1,8 @@
 # GLInT MNIST experiment configuration
 
 [logging]
-project = "gldg/ssvm-glint"
-path = "../logs"            # relative to the directory of this configuration file
+project = "ssvm-glint"
+path = "../logs"       # relative to the directory of this configuration file
 name = "glint-mnist"
 tags = []
 wandb = true
@@ -14,17 +14,15 @@ root = "../data"           # relative to the directory of this configuration fil
 [training]
 # seed = 42
 batch_size = 128
-nbatches = 50000
+total_steps = 50000
 test_batch_size = 1000
-lr = 2e-3
+test_every_n_steps = 5000
+lr = 1e-2
+min_lr = 1e-4
+warmup_steps = 1000
+warmup_factor = 1e-3
+weight_decay = 0.01
 dtype = "bfloat16"
-
-[training.scheduler]
-min_lr = 2e-6
-patience = 2000
-factor = 0.2
-threshold = 1e-2
-cooldown = 5000
 
 [training.augmentation]
 
@@ -36,9 +34,11 @@ num_classes = 10
 embed_dim = 32
 depth = 3
 num_heads = 4
-head_dim = 8
-attention_dropout = 0.01
-pool = "cls"
-token_dropout = 0.01
+attention_dropout = 0
+token_dropout = 0.1
 ff_dropout = 0.1
 ff_fanout = 3
+pool = "cls"
+sigma_max = 0.0
+sigma_loss_weight = 1e-2
+invariants_embedder_fanout = 1.8

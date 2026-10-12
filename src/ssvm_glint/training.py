@@ -1,15 +1,16 @@
-import torch
-import torch.nn as nn
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
-from typing import Callable, Any
-from torch.utils.data import DataLoader, DistributedSampler
+import os
 from collections.abc import Iterator
 from pathlib import Path
-import os
-from tqdm import tqdm
-import wandb
+from typing import Any, Callable
+
+import torch
 import torch.distributed as dist
+import wandb
+from torch import nn
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
+from torch.utils.data import DataLoader, DistributedSampler
+from tqdm import tqdm
 
 
 def trainingrun(
@@ -22,6 +23,7 @@ def trainingrun(
     test_every_n_steps: int | None = None,
     scheduler: LRScheduler | None = None,
     metric_fns: dict[str, Callable] | None = None,
+    aux_loss_fn: Callable[[], torch.Tensor] | None = None,
     autocast_dtype: torch.dtype | None = None,
     grad_clip_norm: float | None = None,
     checkpoint_path: Path | str | None = None,
@@ -30,6 +32,10 @@ def trainingrun(
 ) -> dict[str, list]:
     """
     Step-based training loop on (x, y) batches with loss_fn(model(x), y).
+
+    If given, aux_loss_fn() is added to the training loss each step (e.g. a
+    regularizer on the parameters). It is logged as `aux_loss`; `train_loss`
+    and the evaluation use loss_fn only.
 
     Every test_every_n_steps steps (and at the last step) the loss and each
     metric_fns[name](yp, y) are averaged over test_loader, logged, and a
@@ -80,7 +86,9 @@ def trainingrun(
         with torch.autocast(
             device.type, dtype=autocast_dtype, enabled=autocast_dtype is not None
         ):
-            loss = loss_fn(model(x), y)
+            task_loss = loss_fn(model(x), y)
+            aux_loss = aux_loss_fn() if aux_loss_fn is not None else None
+            loss = task_loss if aux_loss is None else task_loss + aux_loss
         scaler.scale(loss).backward()
         if grad_clip_norm is not None:
             scaler.unscale_(optimizer)
@@ -88,7 +96,7 @@ def trainingrun(
         scaler.step(optimizer)
         scaler.update()
 
-        train_loss = loss.detach()
+        train_loss = task_loss.detach()
         if distributed:
             train_loss = train_loss.clone()
             dist.all_reduce(train_loss)
@@ -98,13 +106,10 @@ def trainingrun(
         pbar.set_postfix(loss=f"{train_loss:.4f}", refresh=False)
 
         if wandb_run is not None:
-            wandb_run.log(
-                {
-                    "train_loss": train_loss,
-                    "lr": optimizer.param_groups[0]["lr"],
-                },
-                step=step,
-            )
+            log = {"train_loss": train_loss, "lr": optimizer.param_groups[0]["lr"]}
+            if aux_loss is not None:
+                log["aux_loss"] = aux_loss.item()
+            wandb_run.log(log, step=step)
 
         if scheduler:
             if isinstance(scheduler, ReduceLROnPlateau):

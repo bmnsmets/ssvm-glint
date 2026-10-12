@@ -126,6 +126,23 @@ def test_without_test_loader():
     assert history == {}
 
 
+def test_aux_loss_fn_is_minimized():
+    def run(aux):
+        model = make_model()
+        bias = model[3].bias
+        trainingrun(
+            model,
+            nn.CrossEntropyLoss(),
+            torch.optim.AdamW(model.parameters(), lr=1e-2),
+            total_steps=100,
+            train_loader=DataLoader(make_data(1000, 0), batch_size=50),
+            aux_loss_fn=(lambda: 10 * (bias - 0.5).pow(2).sum()) if aux else None,
+        )
+        return (bias.detach() - 0.5).abs().max()
+
+    assert run(aux=True) < 0.1 < run(aux=False)
+
+
 def test_test_every_without_test_loader_rejected():
     model = make_model()
     with pytest.raises(AssertionError):

@@ -76,6 +76,70 @@ def _no_collate(batch):
     return batch
 
 
+def _g3splat_stats(tokens: AffPlus2Tokens) -> dict[str, Tensor | tuple[Tensor, Tensor]]:
+    """
+    Dataset-wide normalization statistics, computed in float32 over every token of `tokens`.
+
+    `u` gets a scalar mean and standard deviation over all its elements. `t` gets a 2D mean vector
+    but a single scalar scale, the standard deviation over both components jointly, i.e.
+    sqrt((var(t[0]) + var(t[1])) / 2). The scale is deliberately one scalar rather than one per
+    component, so the rescaling stays isotropic and does not distort the geometry; each component
+    then has unit variance up to how much the two differ from each other.
+
+    log(a) is only centered, never rescaled, so it has no std. The scale factor `a` enters
+    `affine_invariant()` through A^-1, so widening log(a) directly widens that feature: on the
+    MNIST splats, standardizing log(a) from its raw std of 0.20 to 1.0 stretches `a` from
+    [0.04, 0.30] to [0.02, 452] and gives `affine_invariant()` tails out to |.| ~ 200. Keeping the
+    raw spread leaves A^-1 well conditioned.
+
+    Args:
+        tokens (AffPlus2Tokens): the split the statistics are taken over, normally the training set
+
+    Returns:
+        dict: "u" and "t" mapping to a (mean, std) pair, "loga" to a mean.
+    """
+    eps = torch.finfo(torch.float32).eps
+    tokens = tokens.to(torch.float32)
+    u, t, loga = tokens.u, tokens.t, tokens.a.log()
+    tm = t.mean(dim=tuple(range(t.ndim - 1)))
+    return {
+        "u": (u.mean(), u.std().clamp_min(eps)),
+        "t": (tm, (t - tm).std().clamp_min(eps)),
+        "loga": loga.mean(),
+    }
+
+
+def _normalize_g3splat(
+    tokens: AffPlus2Tokens, stats: dict[str, Tensor | tuple[Tensor, Tensor]]
+) -> AffPlus2Tokens:
+    """
+    Normalize `u`, `t = A^-1 x` and log(a) with the statistics from `_g3splat_stats`.
+
+    The rotation R and the SL(2) factor S of the polar decomposition A = a * R @ S are left
+    untouched; the isotropic scale is only recentered, as a <- a / exp(mean). The group element is
+    then rebuilt from the normalized parts, so that the result satisfies
+    `result.t == (tokens.t - mean) / std` and `result.a.log()` is centered.
+
+    Returns:
+        AffPlus2Tokens: same batch size, dtype and device as `tokens`.
+    """
+    dtype = tokens.u.dtype
+    tokens = tokens.to(torch.float32)
+    um, ustd = stats["u"]
+    tm, tstd = stats["t"]
+    lm = stats["loga"]
+
+    a, R, S = tokens.polar()
+    a = (a.log() - lm).exp()  # [M,N]
+    A = a[..., None, None] * torch.matmul(R, S)  # [M,N,2,2]
+    t = (tokens.t - tm) / tstd  # [M,N,2]
+    x = torch.matmul(A, t[..., None])  # [M,N,2,1]
+
+    g = torch.cat((A, x), dim=-1)  # [M,N,2,3]
+    u = (tokens.u - um) / ustd
+    return AffPlus2Tokens(g=g, u=u).to(dtype)
+
+
 def load_g3splat_dataset(
     path: str | Path,
     dtype: torch.dtype = torch.float32,
@@ -102,9 +166,24 @@ def get_g3splat_dataloaders(
 ):
     """
     DataLoaders yielding (AffPlus2Tokens [B,N], labels [B]) batches.
+
+    The semantic part `u`, the position `t = A^-1 x` and the log isotropic scale log(a) are
+    normalized with statistics taken over the *training* set only, so the test set is mapped
+    through the same transform rather than being normalized by its own statistics.
+
+    `u` and `t` are standardized to unit variance. log(a) is only centered: rescaling it would
+    widen `a` and with it `affine_invariant()`, which depends on A^-1. See `_g3splat_stats`.
     """
     trainset = load_g3splat_dataset(train_path, dtype=dtype, device=device)
     testset = load_g3splat_dataset(test_path, dtype=dtype, device=device)
+
+    stats = _g3splat_stats(trainset.tokens)
+    trainset = AffPlus2TokenDataset(
+        _normalize_g3splat(trainset.tokens, stats), trainset.labels
+    )
+    testset = AffPlus2TokenDataset(
+        _normalize_g3splat(testset.tokens, stats), testset.labels
+    )
 
     train_loader = torch.utils.data.DataLoader(
         trainset,
@@ -117,7 +196,7 @@ def get_g3splat_dataloaders(
         testset,
         batch_size=test_batch_size,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,
         collate_fn=_no_collate,
     )
     return train_loader, test_loader

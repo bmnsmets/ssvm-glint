@@ -9,3 +9,4 @@ src/glint/wandb/
 .claude/
 .vscode
 .pytest_cache
+CLAUDE.local.md

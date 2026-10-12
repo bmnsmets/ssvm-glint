@@ -1,19 +1,20 @@
 import torch
-from torch import Tensor
 from tensordict import TensorClass
+from torch import Tensor
+
 from ssvm_glint.math import (
-    exp_sym2,
     exp_so2,
+    exp_sym2,
+    inv2x2,
+    inv_apply2x2,
     polar2x2,
     polar2x2_a,
     polar2x2_R,
     polar2x2_S,
-    inv2x2,
-    inv_apply2x2,
 )
 
 
-class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):
+class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):  # ty: ignore[unsupported-base]
     """
     Represent a set of geometric tokens using the affine group with positive determinant in 2D (Aff^+(2)).
     Each token pairs a group element (geometric part `g`) with a feature vector (semantic part `u`).
@@ -43,7 +44,9 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):
         self._tensordict.batch_size = self.g.shape[:-2]
 
     @classmethod
-    def fromg3splatter(cls, c0, c1, c2, r, s, t) -> "AffPlus2Tokens":
+    def fromg3splatter(
+        cls, c0: Tensor, c1: Tensor, c2: Tensor, r: Tensor, s: Tensor, t: Tensor
+    ) -> "AffPlus2Tokens":
         """
         Convert from the Kaji-Ochiai parameterization of the g3splatter
         (S. Kaji and H. Ochiai, "A concise parametrization of affine transformation", SIAM J. Imaging Sci., 2016).
@@ -53,6 +56,9 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):
             x = t
             u = cat(c0, c1, c2),
             i.e. u[..., :C] = c0, u[..., C:2C] = c1 and u[..., 2C:] = c2
+
+        No normalization is applied here; `get_g3splat_dataloaders` standardizes `u`, `t` and log(a)
+        with training-set statistics once both splits are loaded.
 
         Note: the `t` argument becomes `x`; it is not the `t` property of the result, which is A^-1 x.
 
@@ -155,4 +161,21 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):
         Ainv = inv2x2(self.A)  # [...,2,2]
         A = torch.matmul(Ainv, gmean[..., :, :2])  # [...,2,2]
         x = torch.matmul(Ainv, (gmean[..., :, 2] - self.x)[..., None])  # [...,2,1]
+        return torch.cat((A, x), dim=-1)
+
+    def relative(self) -> Tensor:
+        """
+        Relative group elements g_i^-1 g_j for all token pairs, with token i as the reference.
+
+        Writing g_i = (A_i, x_i), entry (i, j) is (A_i^-1 A_j, A_i^-1 (x_j - x_i)).
+
+        Invariance: replacing every token by h g for a fixed h in Aff^+(2) leaves the result unchanged.
+
+        Returns:
+            Tensor [...,N,N,2,3]: entry [..., i, j, :, :] is g_i^-1 g_j.
+        """
+        Ainv = inv2x2(self.A)[..., :, None, :, :]  # [...,N,1,2,2]
+        A = torch.matmul(Ainv, self.A[..., None, :, :, :])  # [...,N,N,2,2]
+        dx = self.x[..., None, :, :] - self.x[..., :, None, :]  # [...,N,N,2], x_j - x_i
+        x = torch.matmul(Ainv, dx[..., None])  # [...,N,N,2,1]
         return torch.cat((A, x), dim=-1)

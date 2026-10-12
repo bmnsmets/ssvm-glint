@@ -351,3 +351,44 @@ def test_stack_and_cat():
     tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
     assert torch.cat([tok, tok], dim=1).batch_size == torch.Size([B, 2 * N])
     assert torch.stack([tok, tok], dim=0).batch_size == torch.Size([2, B, N])
+
+
+# ---------------------------------------------------------------------------
+# relative group elements g_i^-1 g_j
+# ---------------------------------------------------------------------------
+
+
+def to3x3(g):
+    """[...,2,3] -> [...,3,3] matrix representation in GL(3)."""
+    bottom = torch.zeros(*g.shape[:-2], 1, 3, dtype=g.dtype)
+    bottom[..., 0, 2] = 1
+    return torch.cat((g, bottom), dim=-2)
+
+
+def left_act(tok, seed=1):
+    """Tokens h g for a random h in Aff^+(2)."""
+    gen = torch.Generator().manual_seed(seed)
+    r, s, b = (torch.randn(shape, generator=gen, dtype=tok.g.dtype) for shape in ((), (3,), (2,)))
+    H = exp_so2(r) @ exp_sym2(s)  # [2,2]
+    g = torch.cat((H @ tok.A, H @ tok.x[..., None] + b[:, None]), dim=-1)  # [...,2,3]
+    return AffPlus2Tokens(g=g, u=tok.u)
+
+
+def test_relative_diagonal_is_identity():
+    gij = AffPlus2Tokens.fromg3splatter(**make_inputs()).relative()
+    idx = torch.arange(N)
+    torch.testing.assert_close(
+        gij[:, idx, idx], torch.eye(3, dtype=gij.dtype)[:2].expand(B, N, 2, 3)
+    )
+
+
+def test_relative_composes():
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    g = to3x3(tok.g)  # [B,N,3,3]
+    lhs = g[:, :, None] @ to3x3(tok.relative())  # g_i g_i^-1 g_j
+    torch.testing.assert_close(lhs, g[:, None].expand(B, N, N, 3, 3))
+
+
+def test_relative_invariant_under_left_action():
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    torch.testing.assert_close(left_act(tok).relative(), tok.relative())

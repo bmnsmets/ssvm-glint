@@ -8,7 +8,7 @@ authors = [
     { name = "Gijs Bellaard", email = "g.bellaard@tue.nl" },
     { name = "Pieter Wils", email = "p.f.e.j.wils@student.tue.nl" },
 ]
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.13,<3.15"
 dependencies = [
     "einops>=0.8.1",
     "ipykernel>=7.1.0",
@@ -67,9 +67,9 @@ explicit = true
 [dependency-groups]
 dev = ["pytest>=9.1.1"]
 cu11 = ["torch==2.7.1", "torchvision==0.22.1"]
-cu12 = ["torch>=2.14.0", "torchvision>=0.29.0"]
-cu13 = ["torch>=2.14.0", "torchvision>=0.29.0"]
-cpu = ["torch>=2.14.0", "torchvision>=0.29.0"]
+cu12 = ["torch>=2.14.1", "torchvision>=0.29.1"]
+cu13 = ["torch>=2.14.1", "torchvision>=0.29.1"]
+cpu = ["torch>=2.14.1", "torchvision>=0.29.1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,21 +1,22 @@
 import argparse
-from pathlib import Path
 import warnings
+from pathlib import Path
+
 import torch
-from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 import wandb
 from safetensors.torch import save_model
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
-from ssvm_glint.vit import ViT
-from ssvm_glint.glint import GLInTClassifier
-from ssvm_glint.config import load_config_file, print_config_tree, obj_to_dict
+from ssvm_glint.config import load_config_file, obj_to_dict, print_config_tree
 from ssvm_glint.data import (
-    get_mnist_dataloaders,
-    get_g3splat_dataloaders,
-    get_fashion_dataloaders,
     get_cifar10_dataloaders,
+    get_fashion_dataloaders,
+    get_g3splat_dataloaders,
+    get_mnist_dataloaders,
 )
+from ssvm_glint.glint import GLInTClassifier
 from ssvm_glint.training import trainingrun
+from ssvm_glint.vit import ViT
 
 if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     parser = argparse.ArgumentParser(description="Image Classifier Training")
@@ -113,6 +114,7 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
             tags=config.logging.tags,
             config=obj_to_dict(config),
             dir=config.logging.path,
+            save_code=True,
         )
         if config.logging.wandb
         else None
@@ -121,8 +123,28 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     if wandb_run:
         wandb_run.watch(model)
 
+    # No weight decay on LayerNorm parameters and, for GLInT, on the noise scales
+    # and CLS token
+    no_decay = {
+        id(p)
+        for m in model.modules()
+        if isinstance(m, torch.nn.LayerNorm)
+        for p in m.parameters()
+    }
+    if model_class is GLInTClassifier:
+        no_decay |= {
+            id(p)
+            for n, p in model.named_parameters()
+            if n.split(".")[-1] in ("log_sigmas", "cls_token", "alpha", "beta")
+        }
+    params = list(model.parameters())
+    param_groups = [
+        {"params": [p for p in params if id(p) not in no_decay]},
+        {"params": [p for p in params if id(p) in no_decay], "weight_decay": 0.0},
+    ]
+
     opt = torch.optim.AdamW(
-        model.parameters(),
+        param_groups,
         lr=config.training.lr,
         weight_decay=config.training.weight_decay,
     )
@@ -154,7 +176,8 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
         test_loader=test_loader,
         test_every_n_steps=config.training.test_every_n_steps,
         scheduler=sched,
-        metric_fns=metric_fns,
+        metric_fns=metric_fns,  # ty: ignore[invalid-argument-type]
+        aux_loss_fn=model.aux_loss if model_class is GLInTClassifier else None,  # ty: ignore[invalid-argument-type]
         autocast_dtype=config.training.dtype,
         checkpoint_path=config.logging.path / "last.pt",
         resume=args.resume,
@@ -167,7 +190,7 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     model_path = (
         config.logging.path
         / config.logging.name
-        / f"{wandb_run.name if wandb_run else "last"}.safetensors"
+        / f"{wandb_run.name if wandb_run else 'last'}.safetensors"
     )
     print(f"Saving model to: {model_path}")
     save_model(model, model_path)

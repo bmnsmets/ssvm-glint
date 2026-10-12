@@ -10,10 +10,11 @@ N number of tokens, D embedding dim, h number of heads, d per-head q/k dim,
 dv per-head value dim.
 """
 
-import torch.nn as nn
-import torch
-from typing import Literal
 from math import sqrt
+from typing import Literal
+
+import torch
+from torch import nn
 
 
 class PatchTokenizer(nn.Module):
@@ -84,9 +85,6 @@ class PatchTokenizer(nn.Module):
         )
         self.dropout = nn.Dropout1d(dropout) if dropout > 0 else nn.Identity()
 
-        nn.init.trunc_normal_(self.conv.weight, mean=0.0, std=0.02)
-        assert isinstance(self.conv.bias, torch.Tensor)
-        nn.init.constant_(self.conv.bias, 0)
         if self.initial_cls_token is not None:
             nn.init.trunc_normal_(self.initial_cls_token, mean=0.0, std=0.02)
         if self.position_embedding is not None:
@@ -151,10 +149,6 @@ class QKVAttention(nn.Module):
             else nn.Identity()
         )
 
-        nn.init.zeros_(self.query.weight)
-        nn.init.trunc_normal_(self.key.weight, mean=0.0, std=1 / sqrt(self.embed_dim))
-        nn.init.trunc_normal_(self.value.weight, mean=0.0, std=1 / sqrt(self.embed_dim))
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Attend over tokens [B, N, D] -> [B, N, D]."""
         B, N, _ = x.shape
@@ -200,7 +194,7 @@ class TransformerLayer(nn.Module):
     ):
         super().__init__()
 
-        self.pre_ln = nn.LayerNorm(embed_dim)
+        self.pre_attn_ln = nn.LayerNorm(embed_dim)
 
         self.attention = QKVAttention(
             embed_dim=embed_dim,
@@ -209,7 +203,7 @@ class TransformerLayer(nn.Module):
             dropout=attention_dropout,
         )
 
-        self.post_ln = nn.LayerNorm(embed_dim)
+        self.pre_ff_ln = nn.LayerNorm(embed_dim)
 
         ff_hidden_dim = int(ff_fanout * embed_dim)
         self.ff = nn.Sequential(
@@ -220,8 +214,8 @@ class TransformerLayer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.attention(self.pre_ln(x))
-        x = x + self.ff(self.post_ln(x))
+        x = x + self.attention(self.pre_attn_ln(x))
+        x = x + self.ff(self.pre_ff_ln(x))
         return x
 
 

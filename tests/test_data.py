@@ -195,12 +195,48 @@ def test_get_g3splat_dataloaders(tmp_path):
         train_path, test_path, train_batch_size=8, test_batch_size=5
     )
 
-    # drop_last=True for both loaders
+    # drop_last=True for the train loader only, so the test loader keeps its partial batch
     assert len(train_loader) == 2
-    assert len(test_loader) == 2
+    assert len(test_loader) == 3
     for loader, bs in ((train_loader, 8), (test_loader, 5)):
         for tok, lbl in loader:
             assert isinstance(tok, AffPlus2Tokens)
-            assert tok.batch_size == (bs, N)
-            assert lbl.shape == (bs,)
+            assert tok.batch_size[1] == N
+            assert tok.batch_size[0] <= bs
+            assert lbl.shape == (tok.batch_size[0],)
             assert lbl.dtype == torch.int64
+
+
+def test_get_g3splat_dataloaders_normalization(tmp_path):
+    """u, t and log(a) are standardized over the training set, and the test set uses the same transform."""
+    train_path, test_path = tmp_path / "train.safetensors", tmp_path / "test.safetensors"
+    write_g3splat(train_path, m=32, seed=0)
+    write_g3splat(test_path, m=16, seed=1)
+    train_loader, test_loader = get_g3splat_dataloaders(
+        train_path, test_path, train_batch_size=8, test_batch_size=8
+    )
+
+    # the statistics are recomputed from the rebuilt group elements, so they land close to the
+    # targets rather than exactly on them
+    tol = dict(atol=1e-3, rtol=0)
+    tok = train_loader.dataset.tokens
+    zero, one = torch.zeros(()), torch.ones(())
+    torch.testing.assert_close(tok.u.mean(), zero, **tol)
+    torch.testing.assert_close(tok.u.std(), one, **tol)
+    torch.testing.assert_close(tok.t.mean(dim=(0, 1)), torch.zeros(2), **tol)
+    torch.testing.assert_close(tok.t.std(), one, **tol)
+    # one scalar scale over both components jointly, so each component is only roughly 1
+    torch.testing.assert_close(tok.t.std(dim=(0, 1)), torch.ones(2), atol=0.1, rtol=0)
+    # log(a) is only centered, so it keeps the raw spread of the training set
+    raw = load_g3splat_dataset(train_path).tokens
+    torch.testing.assert_close(tok.a.log().mean(), zero, **tol)
+    torch.testing.assert_close(tok.a.log().std(), raw.a.log().std(), **tol)
+
+    # the test set is mapped through the training transform, so it is *not* standardized itself
+    test_tok = test_loader.dataset.tokens
+    assert abs(test_tok.u.mean().item()) > 1e-2
+    assert abs(test_tok.t.std().item() - 1.0) > 1e-2
+
+    # R and S are untouched by the normalization
+    torch.testing.assert_close(tok.R, raw.R, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(tok.S, raw.S, atol=1e-3, rtol=1e-3)

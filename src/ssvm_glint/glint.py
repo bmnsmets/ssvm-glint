@@ -1,47 +1,65 @@
-import torch
-import torch.nn as nn
-from torch import Tensor
+import math
+from math import sqrt
 from typing import Literal
+
+import torch
+from torch import Tensor, nn
+
 from ssvm_glint.tokens import AffPlus2Tokens
 
 
 class GLInTClassifier(nn.Module):
+    """
+    GLInT classifier on AffPlus2Tokens:
+
+    """
 
     def __init__(
         self,
         in_dim: int,
         num_classes: int,
-        semantic_embed_dim: int,
-        invariant_embed_dim: int,
+        embed_dim: int,
         depth: int,
-        head_dim: int | None = None,
         num_heads: int = 1,
-        pool: Literal["cls", "mean"] = "cls",
         token_dropout: float = 0,
-        attention_dropout: float = 0,
-        ff_dropout: float = 0,
         ff_fanout: float = 2,
+        ff_dropout: float = 0,
+        attention_dropout: float = 0,
+        pool: Literal["cls", "mean"] = "cls",
+        sigma_max: float = 0.0,
+        sigma_loss_weight: float = 0.0,
+        invariants_embedder_fanout: float = 2.0,
     ):
         super().__init__()
+        assert embed_dim % num_heads == 0
         self.pool = pool
+        self.sigma_loss_weight = sigma_loss_weight
 
         # Embedding of the semantic part u [B,N,in_dim] -> [B,N,D]
         self.semantic_embedder = nn.Sequential(
-            nn.Linear(in_dim, semantic_embed_dim),
-            nn.LayerNorm(semantic_embed_dim),
+            nn.Linear(in_dim, embed_dim),
+            nn.LayerNorm(embed_dim),
             nn.Identity() if token_dropout == 0 else nn.Dropout1d(token_dropout),
         )
 
-        # Generating invariants
-        self.invariants = VariationalAffPlus2Invariants()
+        self.invariants = VariationalAffPlus2Invariants(sigma_max=sigma_max)
+        iemb_hidden_dim = int(invariants_embedder_fanout * embed_dim)
+        self.invariants_embedder = nn.Sequential(
+            nn.Linear(self.invariants.num_invariants, iemb_hidden_dim),
+            nn.SiLU(),
+            nn.Linear(iemb_hidden_dim, iemb_hidden_dim),
+            nn.SiLU(),
+            nn.Linear(iemb_hidden_dim, embed_dim, bias=False),
+            nn.LayerNorm(embed_dim),
+            nn.Identity() if token_dropout == 0 else nn.Dropout1d(token_dropout),
+        )
 
         # Transformer layers
         self.layers = nn.ModuleList(
             [
-                GLInTLayer(
-                    embed_dim=semantic_embed_dim,
+                StaticGLInTLayer(
+                    embed_dim=embed_dim,
                     num_heads=num_heads,
-                    head_dim=head_dim,
                     ff_fanout=ff_fanout,
                     ff_dropout=ff_dropout,
                     attention_dropout=attention_dropout,
@@ -50,32 +68,215 @@ class GLInTClassifier(nn.Module):
             ]
         )
 
+        # Semantic-only class token
+        self.cls_token = nn.Parameter(torch.zeros(embed_dim)) if pool == "cls" else None
+        if self.cls_token is not None:
+            nn.init.trunc_normal_(self.cls_token, mean=0.0, std=0.02)
+
         # Final fully connected linear layer that maps to the classes
-        self.head = nn.Linear(semantic_embed_dim, num_classes)
+        self.head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, tokens: AffPlus2Tokens) -> Tensor:
         """Map AffPlus2Tokens to class logits [B, num_classes]"""
         tokens = tokens.replace(u=self.semantic_embedder(tokens.u))  # u: [B,N,D]
 
-        invariants = self.invariants(tokens)
-
-        for layer in self.layers:
-            tokens = layer(tokens)
+        inv = self.invariants(tokens)  # [B,N,14]
+        inv_emb = self.invariants_embedder(inv)  # [B,N,D]
 
         if self.pool == "cls":
-            return self.head(tokens.u[:, 0])  # [B,num_classes]
+            assert self.cls_token is not None
+            cls = self.cls_token.expand(tokens.u.shape[0], 1, -1)  # [B,1,D]
+            for layer in self.layers:
+                tokens, cls = layer(tokens, inv_emb, cls)
+            return self.head(cls[:, 0])  # [B,num_classes]
         elif self.pool == "mean":
+            for layer in self.layers:
+                tokens = layer(tokens, inv_emb)
             return self.head(tokens.u.mean(dim=1))  # [B,num_classes]
         else:
             raise ValueError(f"Unknown pooling value: {self.pool}")
 
+    def aux_loss(self) -> Tensor:
+        """Regularization loss to add to the task loss during training."""
+        return self.sigma_loss_weight * self.invariants.sigma_loss()
+
+
+class GatedMLP(nn.Module):
+    """
+    SwiGLU MLP: out = W_o (SiLU(W_a f) * (W_b f)), bias-free.
+
+    Args:
+        in_dim: Input dimension.
+        hidden_dim: Width H of the gated hidden layer.
+        out_dim: Output dimension.
+    """
+
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int):
+        super().__init__()
+        self.inp = nn.Linear(
+            in_dim, 2 * hidden_dim, bias=False
+        )  # W_a and W_b in one matmul
+        self.out = nn.Linear(hidden_dim, out_dim, bias=False)
+
+    def forward(self, f: Tensor) -> Tensor:
+        """Map f [...,in_dim] -> [...,out_dim]."""
+        a, b = self.inp(f).chunk(2, dim=-1)  # 2x[...,H]
+        return self.out(nn.functional.silu(a) * b)  # [...,out_dim]
+
 
 class VariationalAffPlus2Invariants(nn.Module):
-
-    def __init__(self):
+    def __init__(self, sigma_max: float = 0.0):
         super().__init__()
-        self.log_sigmas = nn.Parameter(torch.full((5,), -1.0))
+        self.log_sigmas = nn.Parameter(
+            torch.full((5,), -4.0 if sigma_max > 0 else -math.inf)
+        )
+        self.num_invariants = 14
+        self.sigma_max = sigma_max
+
+    def sigma_loss(self) -> Tensor:
+        """Mean over the 5 feature groups of |sigma - sigma_max|, shape []."""
+        return (self.log_sigmas.exp() - self.sigma_max).abs().mean()
 
     def forward(self, tokens: AffPlus2Tokens) -> Tensor:
-        affi = tokens.affine_invariant()
-        t, (a, R, S) = tokens.t, tokens.polar()  # mathematical invariants
+        """Features [B,N,14] of tokens with g [B,N,2,3]."""
+        # mathematical invariants
+        affi = tokens.affine_invariant().flatten(-2, -1)  # [B,N,6]
+        t, (a, R, S) = tokens.t, tokens.polar()
+        a = a[..., None].log()  # [B,N,1]
+        theta = torch.atan2(R[..., 1, 0], R[..., 0, 0])[..., None]  # [B,N,1]
+        S00, S01, S11 = (
+            S[..., 0, 0:1].log(),
+            S[..., 0, 1:],
+            S[..., 1, 1:].log(),
+        )  # 3x[B,N,1]
+
+        if self.sigma_max > 0 and self.training:
+            sigmas = self.log_sigmas.exp()
+            affi = affi + sigmas[0] * torch.randn_like(affi)  # [B,N,6]
+            t = t + sigmas[1] * torch.randn_like(t)  # [B,N,2]
+            a = a + sigmas[2] * torch.randn_like(a)  # [B,N,1]
+            theta = theta + sigmas[3] * torch.randn_like(theta)  # [B,N,1]
+            S00 = S00 + sigmas[4] * torch.randn_like(S00)  # [B,N,1]
+            S01 = S01 + sigmas[4] * torch.randn_like(S01)  # [B,N,1]
+            S11 = S11 + sigmas[4] * torch.randn_like(S11)  # [B,N,1]
+
+        return torch.cat(
+            (
+                affi,
+                t,
+                a,
+                theta.cos(),
+                theta.sin(),
+                S00,
+                S01,
+                S11,
+            ),
+            dim=-1,
+        )  # [B,N,14]
+
+
+class StaticGLInTLayer(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int = 1,
+        ff_fanout: float = 2,
+        ff_dropout: float = 0,
+        attention_dropout: float = 0,
+    ):
+        super().__init__()
+
+        self.pre_attn_ln = nn.LayerNorm(embed_dim)
+
+        self.attention = InvariantMixingAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=attention_dropout,
+        )
+
+        self.pre_ff_ln = nn.LayerNorm(embed_dim)
+
+        ff_hidden_dim = int(ff_fanout * embed_dim)
+
+        self.ff = nn.Sequential(
+            nn.Linear(embed_dim, ff_hidden_dim, bias=False),
+            nn.SiLU(),
+            nn.Dropout(ff_dropout) if ff_dropout > 0 else nn.Identity(),
+            nn.Linear(ff_hidden_dim, embed_dim, bias=False),
+        )
+
+    def forward(
+        self,
+        tokens: AffPlus2Tokens,  # g: [B,N,2,3] u: [B,N,D]
+        inv_emb: Tensor,  # [B,N,D]
+        cls: Tensor | None = None,  # [B,1,D]
+    ) -> AffPlus2Tokens | tuple[AffPlus2Tokens, Tensor]:
+
+        u = tokens.u  # [B,N,D]
+
+        if cls is None:
+            u = u + self.attention(self.pre_attn_ln(u), inv_emb)
+            u = u + self.ff(self.pre_ff_ln(u))
+            return tokens.replace(u=u)
+        else:
+            y, y_cls = self.attention(self.pre_attn_ln(u), inv_emb, cls)
+            u, cls = u + y, cls + y_cls  # [B,N,D], [B,1,D]
+            u, cls = u + self.ff(self.pre_ff_ln(u)), cls + self.ff(self.pre_ff_ln(cls))
+            return tokens.replace(u=u), cls
+
+
+class InvariantMixingAttention(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int = 1,
+        dropout: float = 0,
+    ):
+        super().__init__()
+        assert embed_dim % num_heads == 0
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.dropout = dropout
+
+        self.query = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.key = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.value = nn.Linear(embed_dim, embed_dim, bias=False)
+
+        nn.init.zeros_(self.query.weight)
+        nn.init.trunc_normal_(self.key.weight, mean=0.0, std=1 / sqrt(embed_dim))
+        nn.init.trunc_normal_(self.value.weight, mean=0.0, std=1 / sqrt(embed_dim))
+
+        self.alpha = nn.Parameter(torch.full((num_heads,), 0.1))  # [h]
+        self.beta = nn.Parameter(torch.full((num_heads,), 0.9))  # [h]
+
+    def forward(
+        self, u: Tensor, inv_emb: Tensor, cls: Tensor | None = None
+    ) -> Tensor | tuple[Tensor, Tensor]:
+
+        B = u.shape[0]
+        h, d = self.num_heads, self.head_dim
+
+        alpha = self.alpha.repeat_interleave(d)
+        beta = self.beta.repeat_interleave(d)
+
+        x = alpha * inv_emb + beta * u  # [B,N,h*d]
+        x = x if cls is None else torch.cat((cls, x), dim=1)  # [B,N+1,D]
+        M = x.shape[1]  # N or N+1
+
+        q, k, v = self.query(x), self.key(x), self.value(x)  # 3x[B,M,h*d]
+
+        _heads = lambda z: z.view(B, M, h, d).permute(0, 2, 1, 3).contiguous()
+
+        q, k, v = map(_heads, (q, k, v))  # 3x[B,h,N,d]
+        y = nn.functional.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=(self.dropout if self.training else 0),
+        )  # [B,h,M,d]
+
+        y = y.permute(0, 2, 1, 3).reshape(B, M, h * d).contiguous()  # [B,M,D]
+        if cls is None:
+            return y  # [B,N,D]
+        return y[:, 1:], y[:, :1]  # [B,N,D], [B,1,D]
