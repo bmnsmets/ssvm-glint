@@ -1,10 +1,12 @@
 from pathlib import Path
+
 import torch
+import torchvision
+from safetensors import safe_open
 from torch import Tensor
 from torch.utils.data import Dataset
-import torchvision
-from torchvision.transforms.v2 import PILToTensor, ToDtype, Compose
-from safetensors import safe_open
+from torchvision.transforms.v2 import Compose, PILToTensor, ToDtype
+
 from ssvm_glint.tokens import AffPlus2Tokens
 
 
@@ -64,12 +66,12 @@ class AffPlus2TokenDataset(Dataset):
     def __len__(self) -> int:
         return self.labels.shape[0]
 
-    def __getitem__(self, i: int) -> tuple[AffPlus2Tokens, Tensor]:
-        return self.tokens[i], self.labels[i]
+    def __getitem__(self, index: int) -> tuple[AffPlus2Tokens, Tensor]:
+        return self.tokens[index], self.labels[index]
 
     def __getitems__(self, idx: list[int]) -> tuple[AffPlus2Tokens, Tensor]:
-        idx = torch.as_tensor(idx, device=self.labels.device)
-        return self.tokens[idx], self.labels[idx]
+        idx_t = torch.as_tensor(idx, device=self.labels.device)
+        return self.tokens[idx_t], self.labels[idx_t]
 
 
 def _no_collate(batch):
@@ -198,6 +200,42 @@ def get_g3splat_dataloaders(
         shuffle=False,
         drop_last=False,
         collate_fn=_no_collate,
+    )
+    return train_loader, test_loader
+
+
+def _load_rasterized(
+    path: str | Path,
+    dtype: torch.dtype,
+    device: torch.device | str | None,
+) -> torch.utils.data.TensorDataset:
+    with safe_open(path, framework="pt", device=str(device or "cpu")) as f:
+        img = f.get_tensor("img")  # [M,28,28] uint8
+        labels = f.get_tensor("lbl").long()  # [M]
+    return torch.utils.data.TensorDataset(img[:, None].to(dtype) / 255, labels)
+
+
+def get_rasterized_dataloaders(
+    train_path: str | Path,
+    test_path: str | Path,
+    train_batch_size: int,
+    test_batch_size: int,
+    dtype: torch.dtype = torch.float32,
+    device: torch.device | str | None = None,
+):
+    """
+    DataLoaders for the rasterized splat files written by scripts/rasterize.py, yielding
+    (images [B,1,28,28] in [0,1], labels [B]) batches like `get_mnist_dataloaders`.
+    """
+    train_loader = torch.utils.data.DataLoader(
+        _load_rasterized(train_path, dtype, device),
+        batch_size=train_batch_size,
+        shuffle=True,
+    )
+    test_loader = torch.utils.data.DataLoader(
+        _load_rasterized(test_path, dtype, device),
+        batch_size=test_batch_size,
+        shuffle=False,
     )
     return train_loader, test_loader
 

@@ -13,6 +13,7 @@ from ssvm_glint.data import (
     get_fashion_dataloaders,
     get_g3splat_dataloaders,
     get_mnist_dataloaders,
+    get_rasterized_dataloaders,
 )
 from ssvm_glint.glint import GLInTClassifier
 from ssvm_glint.training import trainingrun
@@ -72,6 +73,19 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
             / "mnist-splat"
             / "g3splat-16-train.safetensors",
             test_path=config.data.root / "mnist-splat" / "g3splat-16-test.safetensors",
+            train_batch_size=config.training.batch_size,
+            test_batch_size=config.training.test_batch_size,
+            dtype=config.training.dtype,
+            device=config.training.device,
+        )
+    elif config.data.dataset == "mnist-splat-16-rasterized":
+        train_loader, test_loader = get_rasterized_dataloaders(
+            train_path=config.data.root
+            / "mnist-splat-rasterized"
+            / "g3splat-16-train-rasterized.safetensors",
+            test_path=config.data.root
+            / "mnist-splat-rasterized"
+            / "g3splat-16-test-rasterized.safetensors",
             train_batch_size=config.training.batch_size,
             test_batch_size=config.training.test_batch_size,
             dtype=config.training.dtype,

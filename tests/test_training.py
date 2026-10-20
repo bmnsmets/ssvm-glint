@@ -14,7 +14,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-import torch.nn as nn
+from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Subset, TensorDataset
 
@@ -32,7 +32,7 @@ def make_data(n: int, seed: int) -> TensorDataset:
     return TensorDataset(x, (x @ w).argmax(-1))
 
 
-def make_model(dropout: float = 0.0) -> nn.Module:
+def make_model(dropout: float = 0.0) -> nn.Sequential:
     torch.manual_seed(0)
     return nn.Sequential(
         nn.Linear(16, 64), nn.ReLU(), nn.Dropout(dropout), nn.Linear(64, 4)
@@ -129,7 +129,9 @@ def test_without_test_loader():
 def test_aux_loss_fn_is_minimized():
     def run(aux):
         model = make_model()
-        bias = model[3].bias
+        layer = model[3]
+        assert isinstance(layer, nn.Linear)
+        bias = layer.bias
         trainingrun(
             model,
             nn.CrossEntropyLoss(),
@@ -185,7 +187,7 @@ def test_infinite_batches_start_step(start_step):
 def test_infinite_batches_reshuffles_each_epoch():
     loader = index_loader(n=12, batch_size=4, shuffle=True)
     batches = take(infinite_batches(loader), 9)
-    epochs = [sum(batches[i : i + 3], []) for i in range(0, 9, 3)]
+    epochs = [[x for b in batches[i : i + 3] for x in b] for i in range(0, 9, 3)]
     for order in epochs:
         assert sorted(order) == list(range(12))
     assert len({tuple(order) for order in epochs}) > 1
@@ -221,13 +223,13 @@ def test_infinite_batches_empty_loader():
     ids=["fp32", "bf16", "fp16"],
 )
 def test_cuda(tmp_path, autocast_dtype):
-    kwargs = dict(
-        device="cuda",
-        checkpoint_path=tmp_path / "ckpt.pt",
-        autocast_dtype=autocast_dtype,
-        grad_clip_norm=1.0,
-        shuffle=True,
-    )
+    kwargs = {
+        "device": "cuda",
+        "checkpoint_path": tmp_path / "ckpt.pt",
+        "autocast_dtype": autocast_dtype,
+        "grad_clip_norm": 1.0,
+        "shuffle": True,
+    }
     _, history, _ = run_single(**kwargs)
     assert history["test_acc"][-1] > 0.8
     _, history, _ = run_single(total_steps=150, **kwargs)

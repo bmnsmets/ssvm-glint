@@ -4,7 +4,6 @@
 # Taken from https://github.com/VainF/pytorch-msssim/blob/master/pytorch_msssim/ssim.py on 2026-06-2.
 #
 import warnings
-from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -36,7 +35,7 @@ def gaussian_filter(input: Tensor, win: Tensor) -> Tensor:
     Returns:
         torch.Tensor: blurred tensors
     """
-    assert all([ws == 1 for ws in win.shape[1:-1]]), win.shape
+    assert all(ws == 1 for ws in win.shape[1:-1]), win.shape
     if len(input.shape) == 4:
         conv = F.conv2d
     elif len(input.shape) == 5:
@@ -65,8 +64,8 @@ def _ssim(
     data_range: float,
     win: Tensor,
     size_average: bool = True,
-    K: Union[Tuple[float, float], List[float]] = (0.01, 0.03),
-) -> Tuple[Tensor, Tensor]:
+    K: tuple[float, float] | list[float] = (0.01, 0.03),
+) -> tuple[Tensor, Tensor]:
     r"""Calculate ssim index for X and Y
 
     Args:
@@ -114,8 +113,8 @@ def ssim(
     size_average: bool = True,
     win_size: int = 11,
     win_sigma: float = 1.5,
-    win: Optional[Tensor] = None,
-    K: Union[Tuple[float, float], List[float]] = (0.01, 0.03),
+    win: Tensor | None = None,
+    K: tuple[float, float] | list[float] = (0.01, 0.03),
     nonnegative_ssim: bool = False,
 ) -> Tensor:
     r"""interface of ssim
@@ -160,7 +159,7 @@ def ssim(
         win = _fspecial_gauss_1d(win_size, win_sigma)
         win = win.repeat([X.shape[1]] + [1] * (len(X.shape) - 1))
 
-    ssim_per_channel, cs = _ssim(
+    ssim_per_channel, _ = _ssim(
         X, Y, data_range=data_range, win=win, size_average=False, K=K
     )
     if nonnegative_ssim:
@@ -179,9 +178,9 @@ def ms_ssim(
     size_average: bool = True,
     win_size: int = 11,
     win_sigma: float = 1.5,
-    win: Optional[Tensor] = None,
-    weights: Optional[List[float]] = None,
-    K: Union[Tuple[float, float], List[float]] = (0.01, 0.03),
+    win: Tensor | None = None,
+    weights: list[float] | None = None,
+    K: tuple[float, float] | list[float] = (0.01, 0.03),
 ) -> Tensor:
     r"""interface of ms-ssim
     Args:
@@ -225,10 +224,8 @@ def ms_ssim(
         raise ValueError("Window size should be odd.")
 
     smaller_side = min(X.shape[-2:])
-    assert smaller_side > (win_size - 1) * (
-        2**4
-    ), "Image size should be larger than %d due to the 4 downsamplings in ms-ssim" % (
-        (win_size - 1) * (2**4)
+    assert smaller_side > (win_size - 1) * (2**4), (
+        f"Image size should be larger than {(win_size - 1) * (2**4)} due to the 4 downsamplings in ms-ssim"
     )
 
     if weights is None:
@@ -252,7 +249,7 @@ def ms_ssim(
             X = avg_pool(X, kernel_size=2, padding=padding)
             Y = avg_pool(Y, kernel_size=2, padding=padding)
 
-    ssim_per_channel = torch.relu(ssim_per_channel)  # type: ignore  # (batch, channel)
+    ssim_per_channel = torch.relu(ssim_per_channel)  # (batch, channel)
     mcs_and_ssim = torch.stack(
         mcs + [ssim_per_channel], dim=0
     )  # (level, batch, channel)
@@ -273,7 +270,7 @@ class SSIM(torch.nn.Module):
         win_sigma: float = 1.5,
         channel: int = 3,
         spatial_dims: int = 2,
-        K: Union[Tuple[float, float], List[float]] = (0.01, 0.03),
+        K: tuple[float, float] | list[float] = (0.01, 0.03),
         nonnegative_ssim: bool = False,
     ) -> None:
         r"""class for ssim
@@ -287,7 +284,7 @@ class SSIM(torch.nn.Module):
             nonnegative_ssim (bool, optional): force the ssim response to be nonnegative with relu.
         """
 
-        super(SSIM, self).__init__()
+        super().__init__()
         self.win_size = win_size
         self.win = _fspecial_gauss_1d(win_size, win_sigma).repeat(
             [channel, 1] + [1] * spatial_dims
@@ -318,8 +315,8 @@ class MS_SSIM(torch.nn.Module):
         win_sigma: float = 1.5,
         channel: int = 3,
         spatial_dims: int = 2,
-        weights: Optional[List[float]] = None,
-        K: Union[Tuple[float, float], List[float]] = (0.01, 0.03),
+        weights: list[float] | None = None,
+        K: tuple[float, float] | list[float] = (0.01, 0.03),
     ) -> None:
         r"""class for ms-ssim
         Args:
@@ -332,7 +329,7 @@ class MS_SSIM(torch.nn.Module):
             K (list or tuple, optional): scalar constants (K1, K2). Try a larger K2 constant (e.g. 0.4) if you get a negative or NaN results.
         """
 
-        super(MS_SSIM, self).__init__()
+        super().__init__()
         self.win_size = win_size
         self.win = _fspecial_gauss_1d(win_size, win_sigma).repeat(
             [channel, 1] + [1] * spatial_dims

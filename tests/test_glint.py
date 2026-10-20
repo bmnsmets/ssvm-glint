@@ -69,7 +69,9 @@ def test_alpha_mixes_per_head():
         attn.alpha.copy_(torch.tensor([0.0, 1.0, 0.0, 1.0]))
         attn.beta.copy_(1 - attn.alpha)
     inputs = {}
-    attn.query.register_forward_hook(lambda m, args, out: inputs.setdefault("x", args[0]))
+    attn.query.register_forward_hook(
+        lambda m, args, out: inputs.setdefault("x", args[0])
+    )
     attn(u, inv_emb, cls)
     x = inputs["x"]  # [B,N+1,D]
     torch.testing.assert_close(x[:, :1], cls)  # CLS is not mixed
@@ -82,6 +84,7 @@ def test_alpha_receives_gradient():
     attn = InvariantMixingAttention(embed_dim=D, num_heads=H)
     torch.nn.init.normal_(attn.value.weight)  # zero at init
     attn(torch.randn(B, N, D), torch.randn(B, N, D)).sum().backward()
+    assert attn.alpha.grad is not None
     assert (attn.alpha.grad != 0).all()
 
 
@@ -119,7 +122,9 @@ def test_sigma_loss_value():
     expected = (sigmas - model.invariants.sigma_max).abs().mean()
     torch.testing.assert_close(model.invariants.sigma_loss(), expected)
     with torch.no_grad():
-        model.invariants.log_sigmas.fill_(torch.tensor(model.invariants.sigma_max).log())
+        model.invariants.log_sigmas.fill_(
+            torch.tensor(model.invariants.sigma_max).log()
+        )
     torch.testing.assert_close(model.invariants.sigma_loss(), torch.tensor(0.0))
 
 
@@ -129,6 +134,7 @@ def test_aux_loss_raises_small_sigmas():
         sigma_max=1.0, sigma_loss_weight=0.1,
     )  # fmt: skip
     model.aux_loss().backward()
+    assert model.invariants.log_sigmas.grad is not None
     assert (model.invariants.log_sigmas.grad < 0).all()
 
 

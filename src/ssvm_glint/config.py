@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, List, Tuple
+from typing import Any
 
 
 def git_root() -> Path:
@@ -11,6 +11,7 @@ def git_root() -> Path:
 
     out = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
+        check=False,
         cwd=Path(__file__).resolve().parent,
         capture_output=True,
         text=True,
@@ -45,7 +46,7 @@ def load_config_file(path: Path | str) -> SimpleNamespace:
     return parse(cfg)
 
 
-def flatten_config(config: SimpleNamespace) -> List[Tuple[str, Any]]:
+def flatten_config(config: SimpleNamespace) -> list[tuple[str, Any]]:
     """
     Flatten a recursive SimpleNamespace using a period to separate the naming hierarchy.
 

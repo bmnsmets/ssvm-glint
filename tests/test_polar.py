@@ -221,7 +221,7 @@ def test_gradcheck_eager():
 
 def test_gradcheck_compiled(monkeypatch):
     # gradcheck retains the graph, which compiled backwards with donated buffers do not allow
-    monkeypatch.setattr(torch._functorch.config, "donated_buffer", False)
+    monkeypatch.setattr("torch._functorch.config.donated_buffer", False)
     A = random_glp2(8).requires_grad_()
     assert torch.autograd.gradcheck(polar2x2, (A,))
     for f in (polar2x2_a, polar2x2_R, polar2x2_S):

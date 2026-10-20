@@ -19,14 +19,14 @@ def make_inputs(dtype=torch.float64, device="cpu", seed=0):
     def rn(*shape):
         return torch.randn(*shape, generator=g, dtype=dtype).to(device)
 
-    return dict(
-        c0=rn(B, N, C),
-        c1=rn(B, N, C),
-        c2=rn(B, N, C),
-        r=rn(B, N),
-        s=rn(B, N, 3),
-        t=rn(B, N, 2),
-    )
+    return {
+        "c0": rn(B, N, C),
+        "c1": rn(B, N, C),
+        "c2": rn(B, N, C),
+        "r": rn(B, N),
+        "s": rn(B, N, 3),
+        "t": rn(B, N, 2),
+    }
 
 
 def lie_A(r, s):
@@ -317,7 +317,7 @@ def test_gradients_reach_all_inputs():
 def test_gradcheck_geometry(monkeypatch):
     # gradcheck retains the graph, which torch.compile'd backwards with donated
     # buffers (exp_so2, exp_sym2) do not allow
-    monkeypatch.setattr(torch._functorch.config, "donated_buffer", False)
+    monkeypatch.setattr("torch._functorch.config.donated_buffer", False)
     inp = make_inputs()
     r = inp["r"].requires_grad_()
     s = inp["s"].requires_grad_()
@@ -349,8 +349,8 @@ def test_indexing():
 
 def test_stack_and_cat():
     tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
-    assert torch.cat([tok, tok], dim=1).batch_size == torch.Size([B, 2 * N])
-    assert torch.stack([tok, tok], dim=0).batch_size == torch.Size([2, B, N])
+    assert torch.cat([tok, tok], dim=1).shape == torch.Size([B, 2 * N])
+    assert torch.stack([tok, tok], dim=0).shape == torch.Size([2, B, N])
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +368,10 @@ def to3x3(g):
 def left_act(tok, seed=1):
     """Tokens h g for a random h in Aff^+(2)."""
     gen = torch.Generator().manual_seed(seed)
-    r, s, b = (torch.randn(shape, generator=gen, dtype=tok.g.dtype) for shape in ((), (3,), (2,)))
+    r, s, b = (
+        torch.randn(shape, generator=gen, dtype=tok.g.dtype)
+        for shape in ((), (3,), (2,))
+    )
     H = exp_so2(r) @ exp_sym2(s)  # [2,2]
     g = torch.cat((H @ tok.A, H @ tok.x[..., None] + b[:, None]), dim=-1)  # [...,2,3]
     return AffPlus2Tokens(g=g, u=tok.u)

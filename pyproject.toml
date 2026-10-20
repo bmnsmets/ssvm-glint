@@ -84,3 +84,7 @@ conflicts = [
         { group = "cpu" },
     ],
 ]
+
+
+[tool.ty.rules]
+invalid-mutable-override = "ignore"
