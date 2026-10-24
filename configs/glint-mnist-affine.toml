@@ -14,8 +14,8 @@ root = "../data"           # relative to the directory of this configuration fil
 
 [data.augment]
 rotate = 180    # degrees uniform from [-rotate, rotate]
-shear = 3.0     # s1, s3 in exp([[s1,s3],[s3,-s1]]) uniform from [-shear, shear]
-log_scale = 3.0 # scale log uniform from exp(-log_scale) to exp(log_scale)
+shear = 2.0     # s1, s3 in exp([[s1,s3],[s3,-s1]]) uniform from [-shear, shear]
+log_scale = 1.0 # scale log uniform from exp(-log_scale) to exp(log_scale)
 translate = 2.0 # uniform in each dimension [-translate, translate]
 
 

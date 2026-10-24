@@ -27,7 +27,6 @@ src/ssvm_glint/
     training.py      generic training loop (wandb logging, checkpoints, DDP)
 scripts/             entry points
 configs/             TOML configs for the scripts
-    schema/          JSON Schemas for the configs (train, splat)
 tests/               pytest suite
 data/                datasets (gitignored except data/mnist-splat)
 logs/                checkpoints (logs/<config name>/<run name>.safetensors) and wandb files (gitignored)
@@ -36,7 +35,6 @@ logs/                checkpoints (logs/<config name>/<run name>.safetensors) and
 ## Experiments
 
 - Configs are TOML files in `configs/`; paths in them are relative to the config file's directory.
-- Configs are validated against the JSON Schemas in `configs/schema/` (`train.schema.json` for `glint-*`/`vit-*`, `splat.schema.json` for `mnist-g3splat*`). The mapping is in `.taplo.toml`, so the Even Better TOML / Taplo editor extension validates them, and `tests/test_configs.py` checks every config. The schemas are strict: unknown keys are rejected, so when adding a config key or model argument, update the schema too.
 - wandb project `ssvm-glint`. Each step logs `train_loss` and `lr`; every `test_every_n_steps` steps logs `test_loss` and `test_error`. Gradient histograms are logged via `watch`, so the local `logs/wandb/*/files/wandb-summary.json` files are large and mostly histograms. Query runs via the wandb API instead (see `.claude/scripts/wandb_runs.py`).
 
 ## Conventions
