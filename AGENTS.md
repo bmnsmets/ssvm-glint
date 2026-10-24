@@ -10,8 +10,8 @@ Code and experiments for the SSVM 2027 paper *Symmetry Fingerprinting with Learn
 ## Commands
 
 - Tests: `uv run pytest` (CUDA and DDP tests in `tests/test_training.py` skip without GPUs).
-- Train: `uv run scripts/train.py scripts/<config>.toml` (`glint-mnist.toml`, `vit-mnist.toml`), optionally with `--resume`. Runs take minutes on a GPU and log to wandb; do not start one unless asked.
-- Splat MNIST: `uv run scripts/splat.py scripts/mnist-g3splat16.toml`.
+- Train: `uv run scripts/train.py configs/<config>.toml` (`glint-mnist.toml`, `vit-mnist.toml`), optionally with `--resume`. Runs take minutes on a GPU and log to wandb; do not start one unless asked.
+- Splat MNIST: `uv run scripts/splat.py configs/mnist-g3splat16.toml`.
 
 ## Layout
 
@@ -25,7 +25,9 @@ src/ssvm_glint/
     config.py        TOML config loading and printing
     data.py          datasets and dataloaders
     training.py      generic training loop (wandb logging, checkpoints, DDP)
-scripts/             entry points and their TOML configs
+scripts/             entry points
+configs/             TOML configs for the scripts
+    schema/          JSON Schemas for the configs (train, splat)
 tests/               pytest suite
 data/                datasets (gitignored except data/mnist-splat)
 logs/                checkpoints (logs/<config name>/<run name>.safetensors) and wandb files (gitignored)
@@ -33,7 +35,8 @@ logs/                checkpoints (logs/<config name>/<run name>.safetensors) and
 
 ## Experiments
 
-- Configs are TOML files in `scripts/`; paths in them are relative to the config file's directory.
+- Configs are TOML files in `configs/`; paths in them are relative to the config file's directory.
+- Configs are validated against the JSON Schemas in `configs/schema/` (`train.schema.json` for `glint-*`/`vit-*`, `splat.schema.json` for `mnist-g3splat*`). The mapping is in `.taplo.toml`, so the Even Better TOML / Taplo editor extension validates them, and `tests/test_configs.py` checks every config. The schemas are strict: unknown keys are rejected, so when adding a config key or model argument, update the schema too.
 - wandb project `ssvm-glint`. Each step logs `train_loss` and `lr`; every `test_every_n_steps` steps logs `test_loss` and `test_error`. Gradient histograms are logged via `watch`, so the local `logs/wandb/*/files/wandb-summary.json` files are large and mostly histograms. Query runs via the wandb API instead (see `.claude/scripts/wandb_runs.py`).
 
 ## Conventions
@@ -47,5 +50,5 @@ logs/                checkpoints (logs/<config name>/<run name>.safetensors) and
 
 - **Ask, don't guess.** If a request has more than one reasonable reading (which group action, which normalization, which tensor layout), state your assumption or ask. Never silently pick a convention for the geometric maths.
 - **Simplest thing that works.** Implement only what was asked: no speculative config options, no abstractions with a single user, no error handling for states that can't occur. This is research code; clarity beats generality.
-- **Surgical changes.** Touch only what the task needs. Don't reformat or refactor nearby code, and don't change hyperparameters in `scripts/*.toml` unless asked. Point out unrelated problems (dead code, suspect maths) instead of fixing them. Remove only imports and functions that your own change left unused.
+- **Surgical changes.** Touch only what the task needs. Don't reformat or refactor nearby code, and don't change hyperparameters in `configs/*.toml` unless asked. Point out unrelated problems (dead code, suspect maths) instead of fixing them. Remove only imports and functions that your own change left unused.
 - **Verify against a goal.** Turn a task into a check you can run before calling it done: a failing test that reproduces the bug, a shape assertion, or an invariance check under random group elements for changes to `math.py`, `tokens.py` or `glint.py`. For multi-step work, write a short plan with a check for each step.

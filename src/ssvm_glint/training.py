@@ -24,6 +24,7 @@ def trainingrun(
     scheduler: LRScheduler | None = None,
     metric_fns: dict[str, Callable] | None = None,
     aux_loss_fn: Callable[[], torch.Tensor] | None = None,
+    log_fn: Callable[[], dict[str, float]] | None = None,
     autocast_dtype: torch.dtype | None = None,
     grad_clip_norm: float | None = None,
     checkpoint_path: Path | str | None = None,
@@ -36,6 +37,9 @@ def trainingrun(
     If given, aux_loss_fn() is added to the training loss each step (e.g. a
     regularizer on the parameters). It is logged as `aux_loss`; `train_loss`
     and the evaluation use loss_fn only.
+
+    If given, the values returned by log_fn() are added to the per-step log
+    (e.g. parameters of the model to monitor).
 
     Every test_every_n_steps steps (and at the last step) the loss and each
     metric_fns[name](yp, y) are averaged over test_loader, logged, and a
@@ -109,6 +113,8 @@ def trainingrun(
             log = {"train_loss": train_loss, "lr": optimizer.param_groups[0]["lr"]}
             if aux_loss is not None:
                 log["aux_loss"] = aux_loss.item()
+            if log_fn is not None:
+                log.update(log_fn())
             wandb_run.log(log, step=step)
 
         if scheduler:

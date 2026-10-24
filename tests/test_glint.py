@@ -10,7 +10,7 @@ from ssvm_glint.glint import (
     InvariantMixingAttention,
     VariationalAffPlus2Invariants,
 )
-from ssvm_glint.tokens import AffPlus2Tokens
+from ssvm_glint.tokens import AffPlus2Tokens, random_affine
 
 B, N, C, D, H = 5, 7, 2, 16, 4
 
@@ -140,3 +140,24 @@ def test_aux_loss_raises_small_sigmas():
 
 def test_aux_loss_off_by_default():
     assert make_model("cls").aux_loss() == 0
+
+
+def test_log_sigmas_named_per_group():
+    model = GLInTClassifier(in_dim=3 * C, num_classes=10, embed_dim=D, depth=1, num_heads=H, sigma_max=0.1)
+    with torch.no_grad():
+        model.invariants.log_sigmas.copy_(torch.arange(5.0))
+    log_sigmas = model.log_sigmas()
+    assert list(log_sigmas) == [f"log_sigma/{k}" for k in ("affi", "t", "loga", "theta", "S")]
+    assert list(log_sigmas.values()) == pytest.approx(torch.arange(5.0).tolist())
+
+
+def test_invariants_ignore_autocast():
+    """Under bf16 autocast the features of float32 tokens are computed in float32, also for strongly sheared tokens."""
+    invariants = VariationalAffPlus2Invariants().eval()
+    torch.manual_seed(0)
+    tokens = random_affine(make_tokens(), shear=5.0)
+    expected = invariants(tokens)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        out = invariants(tokens)
+    assert out.dtype == torch.float32
+    torch.testing.assert_close(out, expected)

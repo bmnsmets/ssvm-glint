@@ -2,8 +2,8 @@
 Low-level tensor math: matrix exponentials, polar decompositions and inverses for 2x2 matrices.
 """
 
-from torch import Tensor
 import torch
+from torch import Tensor
 
 
 @torch.compile()

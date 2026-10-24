@@ -1,4 +1,5 @@
 import argparse
+import math
 import warnings
 from pathlib import Path
 
@@ -19,18 +20,15 @@ from ssvm_glint.glint import GLInTClassifier
 from ssvm_glint.training import trainingrun
 from ssvm_glint.vit import ViT
 
-if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
-    parser = argparse.ArgumentParser(description="Image Classifier Training")
-    parser.add_argument("config_file", type=Path, help="Configuration file path")
-    parser.add_argument("--resume", action="store_true")
-    args = parser.parse_args()
 
+def run(config_file: Path, resume: bool, repeat_index: int):
+    """One training run, as a fresh call of this script would do."""
     # Load the config from file
-    config = load_config_file(args.config_file)
+    config = load_config_file(config_file)
 
     # Resolve relative paths
-    config.data.root = (args.config_file.parent / config.data.root).resolve()
-    config.logging.path = (args.config_file.parent / config.logging.path).resolve()
+    config.data.root = (config_file.parent / config.data.root).resolve()
+    config.logging.path = (config_file.parent / config.logging.path).resolve()
     (config.logging.path / config.logging.name).mkdir(parents=True, exist_ok=True)
 
     # Select device
@@ -56,7 +54,7 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
 
     # Set seed if defined
     if hasattr(config.training, "seed"):
-        torch.manual_seed(config.training.seed)
+        torch.manual_seed(config.training.seed + repeat_index)
 
     # Prepare data
     if config.data.dataset == "mnist":
@@ -68,6 +66,11 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
             device=config.training.device,
         )
     elif config.data.dataset == "mnist-splat-16":
+        # Optional training augmentation, rotate in degrees and translate in raw splat coordinates.
+        augment = None
+        if hasattr(config.data, "augment"):
+            augment = obj_to_dict(config.data.augment)
+            augment["rotate"] = math.radians(augment.get("rotate", 0.0))
         train_loader, test_loader = get_g3splat_dataloaders(
             train_path=config.data.root
             / "mnist-splat"
@@ -77,6 +80,7 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
             test_batch_size=config.training.test_batch_size,
             dtype=config.training.dtype,
             device=config.training.device,
+            augment=augment,
         )
     elif config.data.dataset == "mnist-splat-16-rasterized":
         train_loader, test_loader = get_rasterized_dataloaders(
@@ -192,9 +196,10 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
         scheduler=sched,
         metric_fns=metric_fns,  # ty: ignore[invalid-argument-type]
         aux_loss_fn=model.aux_loss if model_class is GLInTClassifier else None,  # ty: ignore[invalid-argument-type]
+        log_fn=model.log_sigmas if model_class is GLInTClassifier else None,  # ty: ignore[invalid-argument-type]
         autocast_dtype=config.training.dtype,
         checkpoint_path=config.logging.path / "last.pt",
-        resume=args.resume,
+        resume=resume,
         wandb_run=wandb_run,
     )
 
@@ -209,3 +214,16 @@ if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
     print(f"Saving model to: {model_path}")
     save_model(model, model_path)
     print("Done.")
+
+
+if __name__ == "__main__" and not hasattr(__builtins__, "__IPYTHON__"):
+    parser = argparse.ArgumentParser(description="Image Classifier Training")
+    parser.add_argument("config_file", type=Path, help="Configuration file path")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--repeat", type=int, default=1, help="Number of independent runs"
+    )
+    args = parser.parse_args()
+
+    for i in range(args.repeat):
+        run(args.config_file, resume=args.resume and i == 0, repeat_index=i)

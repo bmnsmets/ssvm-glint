@@ -14,12 +14,14 @@ from torch.utils.data import DataLoader
 
 from ssvm_glint.data import (
     AffPlus2TokenDataset,
+    _g3splat_stats,
     _no_collate,
+    _normalize_g3splat,
     get_g3splat_dataloaders,
     get_rasterized_dataloaders,
     load_g3splat_dataset,
 )
-from ssvm_glint.tokens import AffPlus2Tokens
+from ssvm_glint.tokens import AffPlus2Tokens, random_affine
 
 M, N, C = 20, 4, 1
 
@@ -175,13 +177,14 @@ def test_load_g3splat_dataset_dtype(tmp_path, dtype):
     path = tmp_path / "splats.safetensors"
     params = write_g3splat(path)
     ds = load_g3splat_dataset(path, dtype=dtype)
-    assert ds.tokens.g.dtype == ds.tokens.u.dtype == dtype
+    assert ds.tokens.u.dtype == dtype
     assert ds.labels.dtype == torch.int64
-    # group elements are computed in float32 and only then cast
+    # group elements are kept in float32, only u is cast
+    assert ds.tokens.g.dtype == torch.float32
     expected = AffPlus2Tokens.fromg3splatter(
         **{k: v.float() for k, v in params.items() if k != "lbl"}
     )
-    torch.testing.assert_close(ds.tokens.g, expected.g.to(dtype), rtol=0, atol=0)
+    torch.testing.assert_close(ds.tokens.g, expected.g, rtol=0, atol=0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -280,3 +283,57 @@ def test_get_rasterized_dataloaders(tmp_path):
             assert img.dtype == torch.float32 and lbl.dtype == torch.int64
             assert img.min() >= 0 and img.max() <= 1
             torch.testing.assert_close(img[:, 0, 0, 0] * 255, lbl.float())
+
+
+AUGMENT = {"rotate": 1.0, "shear": 0.5, "log_scale": 0.5, "translate": 0.3}
+
+
+def test_random_affine_commutes_with_normalization():
+    """h applied to raw tokens and then normalized equals h_n = (H, b / (c tstd)) applied to normalized tokens."""
+    params = make_g3splat_params(m=16)
+    raw = AffPlus2Tokens.fromg3splatter(
+        **{k: v.double() for k, v in params.items() if k != "lbl"}
+    )
+    stats = _g3splat_stats(raw)
+    translate_scale = 1 / (raw.a.log().mean().exp() * stats["t"][1]).item()  # 1 / (c tstd)
+
+    torch.manual_seed(0)
+    lhs = _normalize_g3splat(random_affine(raw, **AUGMENT), stats)
+    torch.manual_seed(0)
+    rhs = random_affine(
+        _normalize_g3splat(raw, stats), **AUGMENT, translate_scale=translate_scale
+    )
+    torch.testing.assert_close(lhs.g, rhs.g, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(lhs.u, rhs.u)
+
+
+def test_get_g3splat_dataloaders_augment(tmp_path):
+    """Only the train split is augmented, and labels stay paired with their samples."""
+    train_path, test_path = tmp_path / "train.safetensors", tmp_path / "test.safetensors"
+    write_g3splat(train_path, m=20, seed=0)
+    write_g3splat(test_path, m=12, seed=1)
+    plain = get_g3splat_dataloaders(train_path, test_path, 8, 5)
+    aug = get_g3splat_dataloaders(train_path, test_path, 8, 5, augment=AUGMENT)
+
+    assert aug[1].dataset.transform is None
+    torch.testing.assert_close(aug[1].dataset.tokens.g, plain[1].dataset.tokens.g)
+
+    ds, ref = aug[0].dataset, plain[0].dataset
+    idx = [3, 7, 11]
+    tok, lbl = ds.__getitems__(idx)
+    ref_tok, ref_lbl = ref.__getitems__(idx)
+    assert torch.equal(lbl, ref_lbl)
+    torch.testing.assert_close(tok.u, ref_tok.u)
+    assert not torch.allclose(tok.g, ref_tok.g)
+    torch.testing.assert_close(tok.affine_invariant(), ref_tok.affine_invariant(), atol=1e-4, rtol=1e-4)
+
+
+def test_get_g3splat_dataloaders_keep_g_float32(tmp_path):
+    """With a low precision dtype only u is cast; g stays float32 through normalization and augmentation."""
+    train_path, test_path = tmp_path / "train.safetensors", tmp_path / "test.safetensors"
+    write_g3splat(train_path, m=20, seed=0)
+    write_g3splat(test_path, m=12, seed=1)
+    train, test = get_g3splat_dataloaders(train_path, test_path, 8, 5, dtype=torch.bfloat16, augment=AUGMENT)
+    for tok, _ in (next(iter(train)), next(iter(test))):
+        assert tok.g.dtype == torch.float32
+        assert tok.u.dtype == torch.bfloat16

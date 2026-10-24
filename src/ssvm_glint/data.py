@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import torch
@@ -7,7 +9,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from torchvision.transforms.v2 import Compose, PILToTensor, ToDtype
 
-from ssvm_glint.tokens import AffPlus2Tokens
+from ssvm_glint.tokens import AffPlus2Tokens, random_affine
 
 
 def get_mnist_dataloaders(
@@ -56,22 +58,33 @@ class AffPlus2TokenDataset(Dataset):
 
     Implements `__getitems__` so that a DataLoader fetches a whole batch with a single indexing operation;
     use it with `collate_fn=_no_collate` since the batch is already assembled.
+
+    If given, `transform` is applied to the tokens of every fetched sample or batch, e.g. a random augmentation.
     """
 
-    def __init__(self, tokens: AffPlus2Tokens, labels: Tensor):
+    def __init__(
+        self,
+        tokens: AffPlus2Tokens,
+        labels: Tensor,
+        transform: Callable[[AffPlus2Tokens], AffPlus2Tokens] | None = None,
+    ):
         assert tokens.batch_size[0] == labels.shape[0]
         self.tokens = tokens
         self.labels = labels
+        self.transform = transform
+
+    def _transform(self, tokens: AffPlus2Tokens) -> AffPlus2Tokens:
+        return tokens if self.transform is None else self.transform(tokens)
 
     def __len__(self) -> int:
         return self.labels.shape[0]
 
     def __getitem__(self, index: int) -> tuple[AffPlus2Tokens, Tensor]:
-        return self.tokens[index], self.labels[index]
+        return self._transform(self.tokens[index]), self.labels[index]
 
     def __getitems__(self, idx: list[int]) -> tuple[AffPlus2Tokens, Tensor]:
         idx_t = torch.as_tensor(idx, device=self.labels.device)
-        return self.tokens[idx_t], self.labels[idx_t]
+        return self._transform(self.tokens[idx_t]), self.labels[idx_t]
 
 
 def _no_collate(batch):
@@ -123,9 +136,9 @@ def _normalize_g3splat(
     `result.t == (tokens.t - mean) / std` and `result.a.log()` is centered.
 
     Returns:
-        AffPlus2Tokens: same batch size, dtype and device as `tokens`.
+        AffPlus2Tokens: same batch size, dtypes and device as `tokens`.
     """
-    dtype = tokens.u.dtype
+    gdtype, dtype = tokens.g.dtype, tokens.u.dtype
     tokens = tokens.to(torch.float32)
     um, ustd = stats["u"]
     tm, tstd = stats["t"]
@@ -139,7 +152,7 @@ def _normalize_g3splat(
 
     g = torch.cat((A, x), dim=-1)  # [M,N,2,3]
     u = (tokens.u - um) / ustd
-    return AffPlus2Tokens(g=g, u=u).to(dtype)
+    return AffPlus2Tokens(g=g.to(gdtype), u=u.to(dtype))
 
 
 def load_g3splat_dataset(
@@ -149,12 +162,14 @@ def load_g3splat_dataset(
 ) -> AffPlus2TokenDataset:
     """
     Load a g3splat safetensors file as an AffPlus2TokenDataset with tokens of batch size [M,N] and int64 labels [M].
-    The group elements are computed in float32 and then cast to `dtype`.
+    The group elements are kept in float32, since in lower precision det(A) of strongly sheared tokens
+    cancels to <= 0; only `u` is cast to `dtype`.
     """
     with safe_open(path, framework="pt", device=str(device or "cpu")) as f:
         params = {k: f.get_tensor(k).float() for k in ("c0", "c1", "c2", "r", "s", "t")}
         labels = f.get_tensor("lbl").long()
-    tokens = AffPlus2Tokens.fromg3splatter(**params).to(dtype)
+    tokens = AffPlus2Tokens.fromg3splatter(**params)
+    tokens = tokens.replace(u=tokens.u.to(dtype))
     return AffPlus2TokenDataset(tokens, labels)
 
 
@@ -165,6 +180,7 @@ def get_g3splat_dataloaders(
     test_batch_size: int,
     dtype: torch.dtype = torch.float32,
     device: torch.device | str | None = None,
+    augment: dict[str, float] | None = None,
 ):
     """
     DataLoaders yielding (AffPlus2Tokens [B,N], labels [B]) batches.
@@ -175,13 +191,25 @@ def get_g3splat_dataloaders(
 
     `u` and `t` are standardized to unit variance. log(a) is only centered: rescaling it would
     widen `a` and with it `affine_invariant()`, which depends on A^-1. See `_g3splat_stats`.
+
+    If given, `augment` holds the ranges `rotate`, `shear`, `log_scale` and `translate` of
+    `random_affine`, in raw splat coordinates, and every training batch gets a fresh random transform.
+    The test set is never augmented. The normalization commutes with the action up to the translation:
+    with c = exp(mean log a) and tstd the scale of `t`, h = (H, b) on raw tokens is h = (H, b / (c tstd))
+    on normalized tokens, so the augmentation is applied to the normalized tokens directly.
     """
     trainset = load_g3splat_dataset(train_path, dtype=dtype, device=device)
     testset = load_g3splat_dataset(test_path, dtype=dtype, device=device)
 
     stats = _g3splat_stats(trainset.tokens)
+    transform = None
+    if augment is not None:
+        loga_mean, tstd = stats["loga"], stats["t"][1]
+        assert isinstance(loga_mean, Tensor)
+        translate_scale = 1 / (loga_mean.exp() * tstd).item()  # 1 / (c tstd)
+        transform = partial(random_affine, **augment, translate_scale=translate_scale)
     trainset = AffPlus2TokenDataset(
-        _normalize_g3splat(trainset.tokens, stats), trainset.labels
+        _normalize_g3splat(trainset.tokens, stats), trainset.labels, transform
     )
     testset = AffPlus2TokenDataset(
         _normalize_g3splat(testset.tokens, stats), testset.labels

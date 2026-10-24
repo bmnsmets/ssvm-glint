@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from ssvm_glint.math import exp_so2, exp_sym2
-from ssvm_glint.tokens import AffPlus2Tokens
+from ssvm_glint.tokens import AffPlus2Tokens, random_affine
 
 B, N, C = 2, 5, 3
 
@@ -395,3 +395,82 @@ def test_relative_composes():
 def test_relative_invariant_under_left_action():
     tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
     torch.testing.assert_close(left_act(tok).relative(), tok.relative())
+
+
+# ---------------------------------------------------------------------------
+# random_affine
+# ---------------------------------------------------------------------------
+
+
+def augment(tok, seed=0, **ranges):
+    torch.manual_seed(seed)
+    return random_affine(tok, **ranges)
+
+
+def test_random_affine_off_is_identity():
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    out = augment(tok)
+    torch.testing.assert_close(out.g, tok.g, rtol=0, atol=0)
+    assert out.u is tok.u
+
+
+@pytest.mark.parametrize(
+    "ranges",
+    [{"rotate": 1.0}, {"shear": 0.5}, {"log_scale": 0.5}, {"translate": 0.3},
+     {"rotate": 1.0, "shear": 0.5, "log_scale": 0.5, "translate": 0.3}],
+)
+def test_random_affine_is_left_action(ranges):
+    """The same h for every token of a sample: affine_invariant() and relative() do not change."""
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    out = augment(tok, **ranges)
+    assert not torch.allclose(out.g, tok.g)
+    assert out.g.dtype == tok.g.dtype
+    torch.testing.assert_close(out.affine_invariant(), tok.affine_invariant())
+    torch.testing.assert_close(out.relative(), tok.relative())
+
+
+def test_random_affine_rotate_changes_only_R():
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    out = augment(tok, rotate=1.0)
+    (a, R, S), (a2, R2, S2) = tok.polar(), out.polar()
+    torch.testing.assert_close(a2, a)
+    torch.testing.assert_close(S2, S)
+    torch.testing.assert_close(out.t, tok.t)
+    # R2 = R(theta) R with one theta per sample
+    dR = R2 @ R.transpose(-1, -2)  # [B,N,2,2]
+    torch.testing.assert_close(dR, dR[:, :1].expand_as(dR))
+
+
+def test_random_affine_scale_shifts_only_log_a():
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    out = augment(tok, log_scale=0.5)
+    (a, R, S), (a2, R2, S2) = tok.polar(), out.polar()
+    torch.testing.assert_close(R2, R)
+    torch.testing.assert_close(S2, S)
+    torch.testing.assert_close(out.t, tok.t)
+    ds = a2.log() - a.log()  # [B,N]
+    torch.testing.assert_close(ds, ds[:, :1].expand_as(ds))
+    assert (ds.abs() <= 0.5).all()
+
+
+def test_random_affine_shear_is_unimodular():
+    """The shear is H = exp([[s1,s3],[s3,-s1]]): symmetric positive definite with det 1, so a does not change."""
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    out = augment(tok, shear=0.5)
+    torch.testing.assert_close(out.a, tok.a)
+    torch.testing.assert_close(out.t, tok.t)
+    H = out.A @ torch.linalg.inv(tok.A)  # [B,N,2,2]
+    torch.testing.assert_close(H, H[:, :1].expand_as(H))
+    torch.testing.assert_close(H, H.transpose(-1, -2))
+    torch.testing.assert_close(torch.linalg.det(H), torch.ones(H.shape[:-2], dtype=H.dtype))
+    assert (torch.linalg.eigvalsh(H) > 0).all()
+    assert not torch.allclose(H, torch.eye(2, dtype=H.dtype).expand_as(H))
+
+
+def test_random_affine_translate_changes_only_x():
+    tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
+    out = augment(tok, translate=0.3, translate_scale=2.0)
+    torch.testing.assert_close(out.A, tok.A)
+    dx = out.x - tok.x  # [B,N,2]
+    torch.testing.assert_close(dx, dx[:, :1].expand_as(dx))
+    assert (dx.abs() <= 0.6).all()

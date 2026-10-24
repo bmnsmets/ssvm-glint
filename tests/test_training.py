@@ -356,3 +356,29 @@ def test_ddp_resume(ddp_runs):
     _, _, out_resumed = ddp_runs
     assert torch.equal(out_resumed[0]["params"], out_resumed[1]["params"])
     assert out_resumed[0]["history"]["step"] == list(range(20, 161, 20))
+
+
+class RecordingRun:
+    """Stands in for a wandb run and records what is logged."""
+
+    def __init__(self):
+        self.logs = []
+
+    def log(self, data, step):
+        self.logs.append((step, data))
+
+
+def test_log_fn_is_logged_every_step():
+    model = make_model()
+    run = RecordingRun()
+    trainingrun(
+        model,
+        nn.CrossEntropyLoss(),
+        torch.optim.AdamW(model.parameters(), lr=1e-2),
+        total_steps=5,
+        train_loader=DataLoader(make_data(100, 0), batch_size=50),
+        log_fn=lambda: {"sigma/t": 0.5},
+        wandb_run=run,  # ty: ignore[invalid-argument-type]
+    )
+    assert [step for step, _ in run.logs] == list(range(5))
+    assert all(data["sigma/t"] == 0.5 for _, data in run.logs)

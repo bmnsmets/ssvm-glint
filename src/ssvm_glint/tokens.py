@@ -179,3 +179,48 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):  # ty: ignore[unsupp
         dx = self.x[..., None, :, :] - self.x[..., :, None, :]  # [...,N,N,2], x_j - x_i
         x = torch.matmul(Ainv, dx[..., None])  # [...,N,N,2,1]
         return torch.cat((A, x), dim=-1)
+
+
+def random_affine(
+    tokens: AffPlus2Tokens,
+    rotate: float = 0.0,
+    shear: float = 0.0,
+    log_scale: float = 0.0,
+    translate: float = 0.0,
+    translate_scale: float = 1.0,
+) -> AffPlus2Tokens:
+    """
+    Left action g -> h g with a random h = (H, b) in Aff^+(2) per sample, shared by all tokens of that sample.
+
+    H = exp_so2(theta) @ exp_sym2([s1, -s1, s3]) * exp(s) acts about the origin, where the traceless
+    exp([[s1,s3],[s3,-s1]]) is a volume preserving stretch (det 1). theta, s1 and s3, s and both components
+    of b are drawn uniformly from [-rotate, rotate], [-shear, shear], [-log_scale, log_scale] and
+    [-translate, translate]; a range of 0 turns that transformation off. b is multiplied by
+    `translate_scale`, e.g. 1 / (c * tstd) to act on tokens normalized by `get_g3splat_dataloaders`.
+
+    Args:
+        tokens (AffPlus2Tokens): batch size [...,N], with the tokens of one sample along the last dimension.
+        rotate (float): maximum rotation angle in radians.
+        shear (float): maximum of the stretch coefficients s1 and s3.
+        log_scale (float): maximum log of the isotropic scale factor.
+        translate (float): maximum translation per component.
+        translate_scale (float): factor applied to the sampled translation.
+
+    Returns:
+        AffPlus2Tokens: batch size [...,N] with g = (H A, H x + translate_scale * b) and the same `u`.
+    """
+    dtype = torch.promote_types(tokens.g.dtype, torch.float32)
+    g = tokens.g.to(dtype)  # [...,N,2,3]
+    shape = g.shape[:-3]
+
+    def uniform(r: float, *s: int) -> Tensor:
+        return (2 * torch.rand(*shape, *s, dtype=dtype, device=g.device) - 1) * r
+
+    theta, s1, s3, s = uniform(rotate), uniform(shear), uniform(shear), uniform(log_scale)  # [...]
+    b = uniform(translate, 2) * translate_scale  # [...,2]
+
+    S = exp_sym2(torch.stack((s1, -s1, s3), dim=-1))  # [...,2,2]
+    H = (exp_so2(theta) @ S * s.exp()[..., None, None])[..., None, :, :]  # [...,1,2,2]
+    A = torch.matmul(H, g[..., :2])  # [...,N,2,2]
+    x = torch.matmul(H, g[..., 2:]) + b[..., None, :, None]  # [...,N,2,1]
+    return AffPlus2Tokens(g=torch.cat((A, x), dim=-1).to(tokens.g.dtype), u=tokens.u)

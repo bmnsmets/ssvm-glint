@@ -2,14 +2,22 @@
 
 [logging]
 project = "ssvm-glint"
-path = "../logs"       # relative to the directory of this configuration file
-name = "glint-mnist"
-tags = []
+path = "../logs"           # relative to the directory of this configuration file
+name = "glint-mnist-noaug"
+tags = ["aug:none"]
 wandb = true
 
 [data]
 dataset = "mnist-splat-16"
 root = "../data"           # relative to the directory of this configuration file
+
+
+[data.augment]
+rotate = 0      # degrees uniform from [-rotate, rotate]
+shear = 0.0     # s1, s3 in exp([[s1,s3],[s3,-s1]]) uniform from [-shear, shear]
+log_scale = 0.0 # scale log uniform from exp(-log_scale) to exp(log_scale)
+translate = 0.0 # uniform in each dimension [-translate, translate]
+
 
 [training]
 # seed = 42
@@ -24,7 +32,6 @@ warmup_factor = 1e-3
 weight_decay = 0.01
 dtype = "bfloat16"
 
-[training.augmentation]
 
 [model]
 class_name = "GLInT"
@@ -39,6 +46,6 @@ token_dropout = 0.1
 ff_dropout = 0.1
 ff_fanout = 3
 pool = "cls"
-sigma_max = 0.0
+sigma_max = 7.3891
 sigma_loss_weight = 1e-2
 invariants_embedder_fanout = 1.8

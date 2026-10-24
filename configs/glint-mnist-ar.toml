@@ -1,0 +1,51 @@
+# GLInT MNIST experiment configuration
+
+[logging]
+project = "ssvm-glint"
+path = "../logs"              # relative to the directory of this configuration file
+name = "glint-mnist-ar"
+tags = ["aug:scale+rotation"]
+wandb = true
+
+[data]
+dataset = "mnist-splat-16"
+root = "../data"           # relative to the directory of this configuration file
+
+
+[data.augment]
+rotate = 180    # degrees uniform from [-rotate, rotate]
+shear = 0.0     # s1, s3 in exp([[s1,s3],[s3,-s1]]) uniform from [-shear, shear]
+log_scale = 3.0 # scale log uniform from exp(-log_scale) to exp(log_scale)
+translate = 0.0 # uniform in each dimension [-translate, translate]
+
+
+[training]
+# seed = 42
+batch_size = 128
+total_steps = 50000
+test_batch_size = 1000
+test_every_n_steps = 5000
+lr = 1e-2
+min_lr = 1e-4
+warmup_steps = 1000
+warmup_factor = 1e-3
+weight_decay = 0.01
+dtype = "bfloat16"
+
+
+[model]
+class_name = "GLInT"
+
+[model.kwargs]
+num_classes = 10
+embed_dim = 32
+depth = 3
+num_heads = 4
+attention_dropout = 0
+token_dropout = 0.1
+ff_dropout = 0.1
+ff_fanout = 3
+pool = "cls"
+sigma_max = 7.3891
+sigma_loss_weight = 1e-2
+invariants_embedder_fanout = 1.8

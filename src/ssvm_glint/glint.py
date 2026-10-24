@@ -100,6 +100,11 @@ class GLInTClassifier(nn.Module):
         """Regularization loss to add to the task loss during training."""
         return self.sigma_loss_weight * self.invariants.sigma_loss()
 
+    def log_sigmas(self) -> dict[str, float]:
+        """Current log noise level of each invariant feature group, keyed `log_sigma/<group>` for logging."""
+        values = self.invariants.log_sigmas.tolist()
+        return {f"log_sigma/{k}": v for k, v in zip(self.invariants.sigma_names, values)}
+
 
 class GatedMLP(nn.Module):
     """
@@ -128,9 +133,16 @@ class VariationalAffPlus2Invariants(nn.Module):
     def __init__(self, sigma_max: float = 0.0):
         super().__init__()
         self.log_sigmas = nn.Parameter(
-            torch.full((5,), -4.0 if sigma_max > 0 else -math.inf)
+            torch.full((5,), -5.0 if sigma_max > 0 else -math.inf)
         )
         self.num_invariants = 14
+        self.sigma_names = (
+            "affi",
+            "t",
+            "loga",
+            "theta",
+            "S",
+        )  # feature group of each sigma
         self.sigma_max = sigma_max
 
     def sigma_loss(self) -> Tensor:
@@ -138,7 +150,11 @@ class VariationalAffPlus2Invariants(nn.Module):
         return (self.log_sigmas.exp() - self.sigma_max).abs().mean()
 
     def forward(self, tokens: AffPlus2Tokens) -> Tensor:
-        """Features [B,N,14] of tokens with g [B,N,2,3]."""
+        """Features [B,N,14] of tokens with g [B,N,2,3], computed in the dtype of g regardless of autocast."""
+        with torch.autocast(tokens.g.device.type, enabled=False):
+            return self._features(tokens)
+
+    def _features(self, tokens: AffPlus2Tokens) -> Tensor:
         # mathematical invariants
         affi = tokens.affine_invariant().flatten(-2, -1)  # [B,N,6]
         t, (a, R, S) = tokens.t, tokens.polar()

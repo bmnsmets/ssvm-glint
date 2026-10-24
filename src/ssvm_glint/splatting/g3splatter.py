@@ -1,13 +1,15 @@
-import torch
 import math
-from ssvm_glint.splatting.ssim import SSIM
+from types import SimpleNamespace
+from typing import Literal, overload
+
+import torch
+from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from torch import Tensor
-from typing import Literal, overload
-from types import SimpleNamespace
-from ssvm_glint.math import exp_so2, exp_sym2
+
 from ssvm_glint.config import git_root
+from ssvm_glint.math import exp_so2, exp_sym2
+from ssvm_glint.splatting.ssim import SSIM
 
 
 @overload
@@ -414,6 +416,7 @@ def test(
     coverage: bool = True,
 ):
     from time import perf_counter_ns
+
     import numpy as np
     import torch._dynamo
 
@@ -453,15 +456,17 @@ def test(
         times.append((perf_counter_ns() - t0) / 1e9)
         nans.append(z.isnan().any(dim=(1, 2, 3)).sum().item())
 
-    print(f"\
-dloss = {np.mean(dlosses)*1000:.2f}e-3 ± {np.var(dlosses)*1000:.2f}e-3, \
+    print(
+        f"\
+dloss = {np.mean(dlosses) * 1000:.2f}e-3 ± {np.var(dlosses) * 1000:.2f}e-3, \
 time = {np.mean(times):.2f}s, \
-nans = {np.sum(nans)}/{batch.shape[0]*repeats}")
+nans = {np.sum(nans)}/{batch.shape[0] * repeats}"
+    )
 
 
 def mnist_test():
     import torchvision
-    from torchvision.transforms.v2 import PILToTensor, ToDtype, Compose
+    from torchvision.transforms.v2 import Compose, PILToTensor, ToDtype
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
@@ -481,7 +486,7 @@ def mnist_test():
 
 def mnist_example():
     import torchvision
-    from torchvision.transforms.v2 import PILToTensor, ToDtype, Compose
+    from torchvision.transforms.v2 import Compose, PILToTensor, ToDtype
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_float32_matmul_precision("high")
