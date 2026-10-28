@@ -155,10 +155,16 @@ def run(config_file: Path, resume: bool, repeat_index: int):
             for n, p in model.named_parameters()
             if n.split(".")[-1] in ("log_sigmas", "cls_token", "alpha", "beta")
         }
+    # The classifier head gets its own weight decay
+    head = {id(p) for p in model.head.parameters()}
     params = list(model.parameters())
     param_groups = [
-        {"params": [p for p in params if id(p) not in no_decay]},
+        {"params": [p for p in params if id(p) not in no_decay | head]},
         {"params": [p for p in params if id(p) in no_decay], "weight_decay": 0.0},
+        {
+            "params": list(model.head.parameters()),
+            "weight_decay": config.training.weight_decay_head,
+        },
     ]
 
     opt = torch.optim.AdamW(
@@ -198,7 +204,7 @@ def run(config_file: Path, resume: bool, repeat_index: int):
         aux_loss_fn=model.aux_loss if model_class is GLInTClassifier else None,  # ty: ignore[invalid-argument-type]
         log_fn=model.log_sigmas if model_class is GLInTClassifier else None,  # ty: ignore[invalid-argument-type]
         autocast_dtype=config.training.dtype,
-        checkpoint_path=config.logging.path / "last.pt",
+        checkpoint_path=config.logging.path / config.logging.name / "last.pt",
         resume=resume,
         wandb_run=wandb_run,
     )

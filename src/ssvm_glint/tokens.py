@@ -132,6 +132,10 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):  # ty: ignore[unsupp
         """
         return polar2x2_S(self.A)
 
+    @property
+    def ntokens(self) -> int:
+        return self.g.shape[1]
+
     def polar(self) -> tuple[Tensor, Tensor, Tensor]:
         """
         Polar decomposition A = a * R @ S in one pass, cheaper than accessing `a`, `R` and `S` separately.
@@ -143,7 +147,7 @@ class AffPlus2Tokens(TensorClass["frozen", "tensor_only"]):  # ty: ignore[unsupp
         """
         return polar2x2(self.A)
 
-    def affine_invariant(self) -> Tensor:
+    def canonical_invariant(self) -> Tensor:
         """
         Position of the token mean relative to each token, i.e. the group product g^-1 gmean,
         where gmean is the elementwise mean of `g` over the token dimension.
@@ -216,7 +220,12 @@ def random_affine(
     def uniform(r: float, *s: int) -> Tensor:
         return (2 * torch.rand(*shape, *s, dtype=dtype, device=g.device) - 1) * r
 
-    theta, s1, s3, s = uniform(rotate), uniform(shear), uniform(shear), uniform(log_scale)  # [...]
+    theta, s1, s3, s = (
+        uniform(rotate),
+        uniform(shear),
+        uniform(shear),
+        uniform(log_scale),
+    )  # [...]
     b = uniform(translate, 2) * translate_scale  # [...,2]
 
     S = exp_sym2(torch.stack((s1, -s1, s3), dim=-1))  # [...,2,2]

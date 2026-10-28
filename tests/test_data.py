@@ -325,7 +325,7 @@ def test_get_g3splat_dataloaders_augment(tmp_path):
     assert torch.equal(lbl, ref_lbl)
     torch.testing.assert_close(tok.u, ref_tok.u)
     assert not torch.allclose(tok.g, ref_tok.g)
-    torch.testing.assert_close(tok.affine_invariant(), ref_tok.affine_invariant(), atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(tok.canonical_invariant(), ref_tok.canonical_invariant(), atol=1e-4, rtol=1e-4)
 
 
 def test_get_g3splat_dataloaders_keep_g_float32(tmp_path):

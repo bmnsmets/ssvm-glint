@@ -416,16 +416,21 @@ def test_random_affine_off_is_identity():
 
 @pytest.mark.parametrize(
     "ranges",
-    [{"rotate": 1.0}, {"shear": 0.5}, {"log_scale": 0.5}, {"translate": 0.3},
-     {"rotate": 1.0, "shear": 0.5, "log_scale": 0.5, "translate": 0.3}],
+    [
+        {"rotate": 1.0},
+        {"shear": 0.5},
+        {"log_scale": 0.5},
+        {"translate": 0.3},
+        {"rotate": 1.0, "shear": 0.5, "log_scale": 0.5, "translate": 0.3},
+    ],
 )
 def test_random_affine_is_left_action(ranges):
-    """The same h for every token of a sample: affine_invariant() and relative() do not change."""
+    """The same h for every token of a sample: canonical_invariant() and relative() do not change."""
     tok = AffPlus2Tokens.fromg3splatter(**make_inputs())
     out = augment(tok, **ranges)
     assert not torch.allclose(out.g, tok.g)
     assert out.g.dtype == tok.g.dtype
-    torch.testing.assert_close(out.affine_invariant(), tok.affine_invariant())
+    torch.testing.assert_close(out.canonical_invariant(), tok.canonical_invariant())
     torch.testing.assert_close(out.relative(), tok.relative())
 
 
@@ -462,7 +467,9 @@ def test_random_affine_shear_is_unimodular():
     H = out.A @ torch.linalg.inv(tok.A)  # [B,N,2,2]
     torch.testing.assert_close(H, H[:, :1].expand_as(H))
     torch.testing.assert_close(H, H.transpose(-1, -2))
-    torch.testing.assert_close(torch.linalg.det(H), torch.ones(H.shape[:-2], dtype=H.dtype))
+    torch.testing.assert_close(
+        torch.linalg.det(H), torch.ones(H.shape[:-2], dtype=H.dtype)
+    )
     assert (torch.linalg.eigvalsh(H) > 0).all()
     assert not torch.allclose(H, torch.eye(2, dtype=H.dtype).expand_as(H))
 

@@ -105,8 +105,45 @@ def test_geometry_affects_logits():
         assert not torch.allclose(model(other_g), model(tokens))
 
 
+def run_with_token_dropout(train):
+    """Run a model with token_dropout=0.5; return input tokens and the (g, u) it embeds."""
+    torch.manual_seed(0)
+    model = GLInTClassifier(
+        in_dim=3 * C, num_classes=10, embed_dim=D, depth=1, num_heads=H,
+        token_dropout=0.5,
+    ).train(train)  # fmt: skip
+    captured = {}
+    model.semantic_embedder.register_forward_pre_hook(
+        lambda m, args: captured.update(u=args[0])
+    )
+    model.invariants.register_forward_pre_hook(
+        lambda m, args: captured.update(g=args[0].g)
+    )
+    tokens = make_tokens()
+    model(tokens)
+    return model, tokens, captured["g"], captured["u"]
+
+
+def test_token_dropout_removes_tokens():
+    _, tokens, g, u = run_with_token_dropout(train=True)
+    assert g.shape == (B, N - int(0.5 * N), 2, 3)
+    assert u.shape == (B, N - int(0.5 * N), 3 * C)
+    # every kept (g, u) pair is an input pair of the same sample
+    flat = torch.cat((tokens.g.flatten(-2), tokens.u), dim=-1)  # [B,N,6+3C]
+    kept = torch.cat((g.flatten(-2), u), dim=-1)  # [B,N',6+3C]
+    match = (kept[:, :, None] == flat[:, None]).all(-1)  # [B,N',N]
+    assert (match.sum(-1) == 1).all()
+
+
+def test_token_dropout_off_in_eval():
+    model, tokens, g, u = run_with_token_dropout(train=False)
+    assert g.shape[1] == u.shape[1] == N
+    with torch.no_grad():
+        torch.testing.assert_close(model(tokens), model(tokens))
+
+
 def test_invariant_noise_only_in_training():
-    invariants, tokens = VariationalAffPlus2Invariants(sigma_max=1.0), make_tokens()
+    invariants, tokens = VariationalAffPlus2Invariants(sigma_big=1.0), make_tokens()
     with torch.no_grad():
         invariants.eval()
         torch.testing.assert_close(invariants(tokens), invariants(tokens))
@@ -119,11 +156,11 @@ def test_sigma_loss_value():
     sigmas = torch.tensor([0.1, 0.5, 1.0, 2.0, 3.0])
     with torch.no_grad():
         model.invariants.log_sigmas.copy_(sigmas.log())
-    expected = (sigmas - model.invariants.sigma_max).abs().mean()
+    expected = (sigmas - model.invariants.sigma_big).abs().mean()
     torch.testing.assert_close(model.invariants.sigma_loss(), expected)
     with torch.no_grad():
         model.invariants.log_sigmas.fill_(
-            torch.tensor(model.invariants.sigma_max).log()
+            torch.tensor(model.invariants.sigma_big).log()
         )
     torch.testing.assert_close(model.invariants.sigma_loss(), torch.tensor(0.0))
 
@@ -131,7 +168,7 @@ def test_sigma_loss_value():
 def test_aux_loss_raises_small_sigmas():
     model = GLInTClassifier(
         in_dim=3 * C, num_classes=10, embed_dim=D, depth=1, num_heads=H,
-        sigma_max=1.0, sigma_loss_weight=0.1,
+        sigma_big=1.0, sigma_loss_weight=0.1,
     )  # fmt: skip
     model.aux_loss().backward()
     assert model.invariants.log_sigmas.grad is not None
@@ -143,11 +180,11 @@ def test_aux_loss_off_by_default():
 
 
 def test_log_sigmas_named_per_group():
-    model = GLInTClassifier(in_dim=3 * C, num_classes=10, embed_dim=D, depth=1, num_heads=H, sigma_max=0.1)
+    model = GLInTClassifier(in_dim=3 * C, num_classes=10, embed_dim=D, depth=1, num_heads=H, sigma_big=0.1)
     with torch.no_grad():
         model.invariants.log_sigmas.copy_(torch.arange(5.0))
     log_sigmas = model.log_sigmas()
-    assert list(log_sigmas) == [f"log_sigma/{k}" for k in ("affi", "t", "loga", "theta", "S")]
+    assert list(log_sigmas) == [f"log_sigma_{k}" for k in ("aff", "scale", "rot", "shear", "trans")]
     assert list(log_sigmas.values()) == pytest.approx(torch.arange(5.0).tolist())
 
 

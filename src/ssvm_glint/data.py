@@ -102,9 +102,9 @@ def _g3splat_stats(tokens: AffPlus2Tokens) -> dict[str, Tensor | tuple[Tensor, T
     then has unit variance up to how much the two differ from each other.
 
     log(a) is only centered, never rescaled, so it has no std. The scale factor `a` enters
-    `affine_invariant()` through A^-1, so widening log(a) directly widens that feature: on the
+    `canonical_invariant()` through A^-1, so widening log(a) directly widens that feature: on the
     MNIST splats, standardizing log(a) from its raw std of 0.20 to 1.0 stretches `a` from
-    [0.04, 0.30] to [0.02, 452] and gives `affine_invariant()` tails out to |.| ~ 200. Keeping the
+    [0.04, 0.30] to [0.02, 452] and gives `canonical_invariant()` tails out to |.| ~ 200. Keeping the
     raw spread leaves A^-1 well conditioned.
 
     Args:
@@ -190,7 +190,7 @@ def get_g3splat_dataloaders(
     through the same transform rather than being normalized by its own statistics.
 
     `u` and `t` are standardized to unit variance. log(a) is only centered: rescaling it would
-    widen `a` and with it `affine_invariant()`, which depends on A^-1. See `_g3splat_stats`.
+    widen `a` and with it `canonical_invariant()`, which depends on A^-1. See `_g3splat_stats`.
 
     If given, `augment` holds the ranges `rotate`, `shear`, `log_scale` and `translate` of
     `random_affine`, in raw splat coordinates, and every training batch gets a fresh random transform.

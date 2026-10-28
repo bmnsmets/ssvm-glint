@@ -2,9 +2,9 @@
 
 [logging]
 project = "ssvm-glint"
-path = "../logs"                    # relative to the directory of this configuration file
+path = "../logs"                                  # relative to the directory of this configuration file
 name = "glint-mnist-rt"
-tags = ["aug:rotation+translation"]
+tags = ["att:mixemb", "aug:rotation+translation"]
 wandb = true
 
 [data]
@@ -16,7 +16,7 @@ root = "../data"           # relative to the directory of this configuration fil
 rotate = 180    # degrees uniform from [-rotate, rotate]
 shear = 0.0     # s1, s3 in exp([[s1,s3],[s3,-s1]]) uniform from [-shear, shear]
 log_scale = 0.0 # scale log uniform from exp(-log_scale) to exp(log_scale)
-translate = 5.0 # uniform in each dimension [-translate, translate]
+translate = 1.5 # uniform in each dimension [-translate, translate]
 
 
 [training]
@@ -25,13 +25,13 @@ batch_size = 128
 total_steps = 50000
 test_batch_size = 1000
 test_every_n_steps = 5000
-lr = 1e-2
-min_lr = 1e-4
-warmup_steps = 1000
+lr = 5e-3
+min_lr = 5e-5
+warmup_steps = 100
 warmup_factor = 1e-3
 weight_decay = 0.01
+weight_decay_head = 0.1
 dtype = "bfloat16"
-
 
 [model]
 class_name = "GLInT"
@@ -41,11 +41,10 @@ num_classes = 10
 embed_dim = 32
 depth = 3
 num_heads = 4
-attention_dropout = 0
-token_dropout = 0.1
+token_dropout = 0
 ff_dropout = 0.1
 ff_fanout = 3
 pool = "cls"
-sigma_max = 7.3891
-sigma_loss_weight = 1e-2
+sigma_big = 7.3891               # e^2
+sigma_loss_weight = 5e-2
 invariants_embedder_fanout = 1.8

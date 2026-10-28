@@ -2,14 +2,14 @@
 
 [logging]
 project = "ssvm-glint"
-path = "../logs"       # relative to the directory of this configuration file
+path = "../logs"                    # relative to the directory of this configuration file
 name = "vit-mnist-splat-rasterized"
 tags = []
 wandb = true
 
 [data]
 dataset = "mnist-splat-16-rasterized"
-root = "../data"  # relative to the directory of this configuration file
+root = "../data"                      # relative to the directory of this configuration file
 
 [training]
 # seed = 42
@@ -18,10 +18,11 @@ total_steps = 50000
 test_batch_size = 1000
 test_every_n_steps = 5000
 lr = 1e-2
-min_lr = 1e-4
-warmup_steps = 1000
+min_lr = 5e-5
+warmup_steps = 100
 warmup_factor = 1e-3
 weight_decay = 0.01
+weight_decay_head = 0.1
 dtype = "bfloat16"
 
 [model]
@@ -36,9 +37,8 @@ embed_dim = 32
 depth = 3
 num_heads = 4
 head_dim = 8
-attention_dropout = 0
 pool = "cls"
-patch_dropout = 0.1
+patch_dropout = 0
 ff_dropout = 0.1
 ff_fanout = 3
 position_embedding = "learned"

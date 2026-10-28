@@ -4,7 +4,7 @@
 project = "ssvm-glint"
 path = "../logs"       # relative to the directory of this configuration file
 name = "glint-mnist"
-tags = []
+tags = ["att:mixemb"]
 wandb = true
 
 [data]
@@ -17,11 +17,12 @@ batch_size = 128
 total_steps = 50000
 test_batch_size = 1000
 test_every_n_steps = 5000
-lr = 1e-2
-min_lr = 1e-4
-warmup_steps = 1000
+lr = 5e-3
+min_lr = 5e-5
+warmup_steps = 100
 warmup_factor = 1e-3
 weight_decay = 0.01
+weight_decay_head = 0.1
 dtype = "bfloat16"
 
 [model]
@@ -32,11 +33,10 @@ num_classes = 10
 embed_dim = 32
 depth = 3
 num_heads = 4
-attention_dropout = 0
-token_dropout = 0.1
+token_dropout = 0
 ff_dropout = 0.1
 ff_fanout = 3
 pool = "cls"
-sigma_max = 0.0
-sigma_loss_weight = 1e-2
+sigma_big = 0
+sigma_loss_weight = 0
 invariants_embedder_fanout = 1.8
