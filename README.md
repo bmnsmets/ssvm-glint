@@ -1,6 +1,8 @@
 # GLInT: Geometric Learned Invariant Transformer
 
-This repository contains the code and experiments accompanying the _Symmetry Fingerprinting with Learnable Invariants Transformers_ article submission to [SSVM 2027](https://ssvm2027.github.io/).
+This repository contains the code and experiments accompanying the [_Symmetry Fingerprinting with Learnable Invariants Transformers_](https://arxiv.org/abs/2611.20150) article submission to [SSVM 2027](https://ssvm2027.github.io/).
+
+![GLInT workflow](glint-workflow.png)
 
 ## Getting started
 
@@ -51,3 +53,18 @@ The `mnist-g3splat16.toml` file contains the splatter configuration as used in t
 ## Training
 
 To train a model run `uv run scripts/train.py configs/glint-mnist.toml` (or `configs/vit-mnist.toml` for the ViT baseline).
+
+
+## Cite
+
+```biblatex
+@misc{smets2026symmetryfingerprinting,
+      title={Symmetry Fingerprinting with Geometric Learnable Invariants Transformers}, 
+      author={Bart M. N. Smets and Gijs Bellaard and Pieter Wils},
+      year={2026},
+      eprint={2611.20150},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2611.20150}, 
+}
+```
